@@ -1,6 +1,12 @@
 import Foundation
 
 struct CaptureSettings {
+    enum Shape: String {
+        case rectangle
+        case square
+        case circle
+    }
+
     enum Output: String {
         case copy
         case save
