@@ -3,6 +3,7 @@ import AppKit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let captureBackend: any ScreenCaptureBackend
+    private let shortcutService = GlobalShortcutService()
     private var statusItem: NSStatusItem?
     private var selectionController: RegionSelectionController?
     private var isCapturing = false
@@ -15,6 +16,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         installStatusItem()
+        do {
+            try shortcutService.registerDefault { [weak self] in
+                self?.capturePrimaryDisplay()
+            }
+        } catch {
+            present(error: error)
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        shortcutService.unregister()
     }
 
     private func installStatusItem() {
@@ -23,10 +35,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             systemSymbolName: "viewfinder",
             accessibilityDescription: "Cutter"
         )
+        item.button?.toolTip = "Cutter（快捷键：⌥⌘2）"
 
         let menu = NSMenu()
         let captureItem = menu.addItem(
-            withTitle: "截取区域并复制",
+            withTitle: "截取区域并复制    ⌥⌘2",
             action: #selector(capturePrimaryDisplay),
             keyEquivalent: ""
         )

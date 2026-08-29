@@ -1,0 +1,18 @@
+{
+  "id": "cutter",
+  "name": "Cutter",
+  "workingDirectory": ".",
+  "initCommand": "./scripts/build-app.sh",
+  "startCommand": "./scripts/start.sh",
+  "stopCommand": "./scripts/stop.sh",
+  "statusCommand": "./scripts/status.sh",
+  "restartCommand": "./scripts/restart.sh",
+  "openEntryCommand": "./scripts/open-homepage.sh",
+  "openHomepageCommand": "./scripts/open-homepage.sh",
+  "surfaceType": "desktop",
+  "runtimeMode": "development",
+  "processMode": "managed",
+  "processManager": "project-script",
+  "pidFile": ".control-panel/cutter.pid",
+  "notes": "原生 macOS 菜单栏截图工具"
+}

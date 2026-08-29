@@ -9,6 +9,7 @@ Cutter is a native macOS screenshot tool focused on still images. The current mi
 - Freezes the primary display through ScreenCaptureKit.
 - Presents a native drag-selection overlay with live pixel dimensions.
 - Crops the frozen image and copies the selected region to the system clipboard.
+- Registers a global `⌥⌘2` shortcut for capture, including when Cutter is not focused.
 
 Annotation, saving, pinning, scrolling capture, multi-display selection, and global shortcuts are planned but not implemented yet.
 
