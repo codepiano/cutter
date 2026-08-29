@@ -20,10 +20,14 @@ struct CaptureSettings {
     static var current: CaptureSettings {
         let defaults = UserDefaults.standard
         let output = Output(rawValue: defaults.string(forKey: Keys.output) ?? "copy") ?? .copy
-        let defaultDirectory = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+        let defaultDirectory = (FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Pictures"))
+            .appendingPathComponent("Cutter", isDirectory: true)
+        let oldDefaultDirectory = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Downloads")
         let configuredDirectory = defaults.string(forKey: Keys.downloadDirectory)
             .map(URL.init(fileURLWithPath:))
+            .flatMap { $0.path == oldDefaultDirectory.path ? nil : $0 }
             ?? defaultDirectory
         return CaptureSettings(
             includeCursor: defaults.bool(forKey: Keys.includeCursor),
