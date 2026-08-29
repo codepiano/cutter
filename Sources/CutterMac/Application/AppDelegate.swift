@@ -117,10 +117,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case .copy:
                     try ImageClipboard.copy(result.image, scaleFactor: capture.scaleFactor)
                 case .save:
-                    try ImageFileWriter.savePNG(result.image)
+                    _ = try ImageFileWriter.savePNG(
+                        result.image,
+                        to: captureSettings.downloadDirectory
+                    )
                 case .copyAndSave:
                     try ImageClipboard.copy(result.image, scaleFactor: capture.scaleFactor)
-                    try ImageFileWriter.savePNG(result.image)
+                    _ = try ImageFileWriter.savePNG(
+                        result.image,
+                        to: captureSettings.downloadDirectory
+                    )
                 }
                 showStatusFeedback()
             } catch {

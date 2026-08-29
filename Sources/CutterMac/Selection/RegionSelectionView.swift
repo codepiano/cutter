@@ -74,11 +74,7 @@ final class RegionSelectionView: NSView {
     override func mouseUp(with event: NSEvent) {
         if let output = pendingOutput {
             pendingOutput = nil
-            guard let selection = selectionRect, let cropped = crop(selection) else {
-                onCancel?()
-                return
-            }
-            onSelection?(cropped, output)
+            complete(output: output)
             return
         }
         dragCurrent = clamped(convert(event.locationInWindow, from: nil))
@@ -95,6 +91,8 @@ final class RegionSelectionView: NSView {
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 {
             onCancel?()
+        } else if event.keyCode == 36 || event.keyCode == 76 {
+            complete(output: .copy)
         } else {
             super.keyDown(with: event)
         }
@@ -156,8 +154,8 @@ final class RegionSelectionView: NSView {
 
         let actions: [(CaptureSettings.Output, String)] = [
             (.copy, "复制"),
-            (.save, "保存 PNG"),
-            (.copyAndSave, "复制并保存")
+            (.save, "下载"),
+            (.copyAndSave, "复制并下载")
         ]
         let buttonWidth = toolbar.width / CGFloat(actions.count)
         for (index, action) in actions.enumerated() {
@@ -204,5 +202,16 @@ final class RegionSelectionView: NSView {
         guard toolbar.contains(point) else { return nil }
         let index = min(2, max(0, Int((point.x - toolbar.minX) / (toolbar.width / 3))))
         return [.copy, .save, .copyAndSave][index]
+    }
+
+    private func complete(output: CaptureSettings.Output) {
+        guard let selection = selectionRect,
+              selection.width >= 2,
+              selection.height >= 2,
+              let cropped = crop(selection) else {
+            onCancel?()
+            return
+        }
+        onSelection?(cropped, output)
     }
 }

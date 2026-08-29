@@ -4,24 +4,27 @@ import Foundation
 
 enum ImageFileWriter {
     @MainActor
-    static func savePNG(_ image: CGImage) throws {
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.png]
-        panel.canCreateDirectories = true
-        panel.nameFieldStringValue = defaultFileName()
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-
+    static func savePNG(_ image: CGImage, to directory: URL) throws -> URL {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var url = directory.appendingPathComponent(defaultFileName())
+        var suffix = 2
+        while FileManager.default.fileExists(atPath: url.path) {
+            url = directory.appendingPathComponent(defaultFileName(suffix: suffix))
+            suffix += 1
+        }
         let representation = NSBitmapImageRep(cgImage: image)
         guard let data = representation.representation(using: .png, properties: [:]) else {
             throw ImageFileError.encodingFailed
         }
         try data.write(to: url, options: .atomic)
+        return url
     }
 
-    private static func defaultFileName() -> String {
+    private static func defaultFileName(suffix: Int? = nil) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
-        return "Cutter-\(formatter.string(from: Date())).png"
+        let base = "Cutter-\(formatter.string(from: Date()))"
+        return "\(base)\(suffix.map { "-\($0)" } ?? "").png"
     }
 }
 
