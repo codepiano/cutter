@@ -2,7 +2,7 @@ import CoreGraphics
 import ScreenCaptureKit
 
 actor ScreenCaptureKitBackend: ScreenCaptureBackend {
-    func capturePrimaryDisplay() async throws -> CapturedImage {
+    func capturePrimaryDisplay(includeCursor: Bool) async throws -> CapturedImage {
         guard CGPreflightScreenCaptureAccess() else {
             throw ScreenCaptureError.permissionDenied
         }
@@ -25,7 +25,7 @@ actor ScreenCaptureKitBackend: ScreenCaptureBackend {
         let configuration = SCStreamConfiguration()
         configuration.width = Int(CGDisplayPixelsWide(primaryDisplayID))
         configuration.height = Int(CGDisplayPixelsHigh(primaryDisplayID))
-        configuration.showsCursor = false
+        configuration.showsCursor = includeCursor
         configuration.capturesAudio = false
 
         let image = try await SCScreenshotManager.captureImage(

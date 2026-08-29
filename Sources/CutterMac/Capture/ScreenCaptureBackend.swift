@@ -8,7 +8,7 @@ struct CapturedImage: @unchecked Sendable {
 }
 
 protocol ScreenCaptureBackend: Sendable {
-    func capturePrimaryDisplay() async throws -> CapturedImage
+    func capturePrimaryDisplay(includeCursor: Bool) async throws -> CapturedImage
 }
 
 enum ScreenCaptureError: LocalizedError, Equatable {

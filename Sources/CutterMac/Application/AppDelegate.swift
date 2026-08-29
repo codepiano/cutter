@@ -6,6 +6,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let shortcutService = GlobalShortcutService()
     private var statusItem: NSStatusItem?
     private var selectionController: RegionSelectionController?
+    private var captureSettings = CaptureSettings.current
+    private var includeCursorItem: NSMenuItem?
+    private var outputItems: [CaptureSettings.Output: NSMenuItem] = [:]
     private var isCapturing = false
 
     override init() {
@@ -18,7 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installStatusItem()
         do {
             try shortcutService.registerDefault { [weak self] in
-                self?.capturePrimaryDisplay()
+                self?.openCaptureMenu()
             }
         } catch {
             present(error: error)
@@ -39,11 +42,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let menu = NSMenu()
         let captureItem = menu.addItem(
-            withTitle: "截取区域并复制    ⌥⌘2",
+            withTitle: "开始截图    ⌥⌘2",
             action: #selector(capturePrimaryDisplay),
             keyEquivalent: ""
         )
         captureItem.target = self
+
+        let modeMenu = NSMenu()
+        let regionItem = modeMenu.addItem(withTitle: "区域截图", action: nil, keyEquivalent: "")
+        regionItem.state = .on
+        let windowItem = modeMenu.addItem(withTitle: "窗口截图（即将支持）", action: nil, keyEquivalent: "")
+        windowItem.isEnabled = false
+        let fullScreenItem = modeMenu.addItem(withTitle: "全屏截图（即将支持）", action: nil, keyEquivalent: "")
+        fullScreenItem.isEnabled = false
+        let modeItem = menu.addItem(withTitle: "截图方式", action: nil, keyEquivalent: "")
+        modeItem.submenu = modeMenu
+
+        let cursorItem = menu.addItem(
+            withTitle: "包含鼠标指针",
+            action: #selector(toggleCursor),
+            keyEquivalent: ""
+        )
+        cursorItem.target = self
+        cursorItem.state = captureSettings.includeCursor ? .on : .off
+        includeCursorItem = cursorItem
+
+        let outputMenu = NSMenu()
+        addOutputItem(to: outputMenu, title: "复制到剪贴板", output: .copy)
+        addOutputItem(to: outputMenu, title: "保存为 PNG", output: .save)
+        addOutputItem(to: outputMenu, title: "复制并保存", output: .copyAndSave)
+        let outputItem = menu.addItem(withTitle: "截图后操作", action: nil, keyEquivalent: "")
+        outputItem.submenu = outputMenu
 
         let permissionItem = menu.addItem(
             withTitle: "检查截图权限",
@@ -64,6 +93,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = item
     }
 
+    private func addOutputItem(to menu: NSMenu, title: String, output: CaptureSettings.Output) {
+        let item = menu.addItem(
+            withTitle: title,
+            action: #selector(selectOutput(_:)),
+            keyEquivalent: ""
+        )
+        item.target = self
+        item.representedObject = output.rawValue
+        item.state = captureSettings.output == output ? .on : .off
+        outputItems[output] = item
+    }
+
+    @objc private func openCaptureMenu() {
+        statusItem?.button?.performClick(nil)
+    }
+
+    @objc private func toggleCursor() {
+        captureSettings.includeCursor.toggle()
+        includeCursorItem?.state = captureSettings.includeCursor ? .on : .off
+        captureSettings.persist()
+    }
+
+    @objc private func selectOutput(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let output = CaptureSettings.Output(rawValue: rawValue) else { return }
+        captureSettings.output = output
+        for (candidate, item) in outputItems {
+            item.state = candidate == output ? .on : .off
+        }
+        captureSettings.persist()
+    }
+
     @objc private func capturePrimaryDisplay() {
         guard !isCapturing else { return }
         isCapturing = true
@@ -71,7 +132,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in
             defer { isCapturing = false }
             do {
-                let capture = try await captureBackend.capturePrimaryDisplay()
+                let capture = try await captureBackend.capturePrimaryDisplay(
+                    includeCursor: captureSettings.includeCursor
+                )
                 let controller = RegionSelectionController()
                 selectionController = controller
                 guard let image = await controller.selectRegion(from: capture) else {
@@ -79,7 +142,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     return
                 }
                 selectionController = nil
-                try ImageClipboard.copy(image, scaleFactor: capture.scaleFactor)
+                switch captureSettings.output {
+                case .copy:
+                    try ImageClipboard.copy(image, scaleFactor: capture.scaleFactor)
+                case .save:
+                    try ImageFileWriter.savePNG(image)
+                case .copyAndSave:
+                    try ImageClipboard.copy(image, scaleFactor: capture.scaleFactor)
+                    try ImageFileWriter.savePNG(image)
+                }
                 showStatusFeedback()
             } catch {
                 present(error: error)
