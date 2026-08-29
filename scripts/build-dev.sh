@@ -17,6 +17,7 @@ swiftc \
   "$project_dir/Sources/CutterMac/Clipboard/ImageClipboard.swift" \
   "$project_dir/Sources/CutterMac/Selection/RegionSelectionController.swift" \
   "$project_dir/Sources/CutterMac/Selection/RegionSelectionView.swift" \
+  "$project_dir/Sources/CutterMac/Shortcuts/GlobalShortcutService.swift" \
   -o "$output_dir/CutterMac" \
   -framework AppKit \
   -framework CoreGraphics \
