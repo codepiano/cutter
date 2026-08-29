@@ -38,7 +38,13 @@ To create and launch an ad-hoc signed development app bundle:
 open .build/Cutter.app
 ```
 
-The development signature is suitable only for local testing. A release still needs a Developer ID, hardened runtime, notarization, and a stable signing pipeline.
+The development app is signed with the local `Cutter Local Development` identity. On a new Mac, create that identity once:
+
+```sh
+./scripts/create-local-signing-identity.sh
+```
+
+This certificate and private key stay in the login keychain and are never written to Git. The identity is for local use only; it is not an Apple Developer ID certificate and is not intended for distribution.
 
 ## Architecture
 
