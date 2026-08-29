@@ -4,16 +4,19 @@ import CoreGraphics
 @MainActor
 final class RegionSelectionController {
     private var window: NSWindow?
-    private var continuation: CheckedContinuation<CGImage?, Never>?
+    private var continuation: CheckedContinuation<(image: CGImage, output: CaptureSettings.Output)?, Never>?
 
-    func selectRegion(from capture: CapturedImage) async -> CGImage? {
+    func selectRegion(
+        from capture: CapturedImage,
+        defaultOutput: CaptureSettings.Output
+    ) async -> (image: CGImage, output: CaptureSettings.Output)? {
         await withCheckedContinuation { continuation in
             self.continuation = continuation
-            presentOverlay(for: capture)
+            presentOverlay(for: capture, defaultOutput: defaultOutput)
         }
     }
 
-    private func presentOverlay(for capture: CapturedImage) {
+    private func presentOverlay(for capture: CapturedImage, defaultOutput: CaptureSettings.Output) {
         guard let screen = NSScreen.screens.first(where: {
             ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
                 == capture.displayID
@@ -24,10 +27,11 @@ final class RegionSelectionController {
 
         let overlay = RegionSelectionView(
             frame: NSRect(origin: .zero, size: screen.frame.size),
-            capture: capture
+            capture: capture,
+            defaultOutput: defaultOutput
         )
-        overlay.onSelection = { [weak self] image in
-            self?.finish(with: image)
+        overlay.onSelection = { [weak self] image, output in
+            self?.finish(with: (image, output))
         }
         overlay.onCancel = { [weak self] in
             self?.finish(with: nil)
@@ -51,12 +55,12 @@ final class RegionSelectionController {
         self.window = window
     }
 
-    private func finish(with image: CGImage?) {
+    private func finish(with result: (image: CGImage, output: CaptureSettings.Output)?) {
         guard let continuation else { return }
         self.continuation = nil
         window?.orderOut(nil)
         window = nil
         NSCursor.pop()
-        continuation.resume(returning: image)
+        continuation.resume(returning: result)
     }
 }

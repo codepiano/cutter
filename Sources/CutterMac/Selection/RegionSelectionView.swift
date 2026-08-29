@@ -3,15 +3,18 @@ import CoreGraphics
 
 @MainActor
 final class RegionSelectionView: NSView {
-    var onSelection: ((CGImage) -> Void)?
+    var onSelection: ((CGImage, CaptureSettings.Output) -> Void)?
     var onCancel: (() -> Void)?
 
     private let capture: CapturedImage
+    private let defaultOutput: CaptureSettings.Output
     private var dragStart: CGPoint?
     private var dragCurrent: CGPoint?
+    private var pendingOutput: CaptureSettings.Output?
 
-    init(frame frameRect: NSRect, capture: CapturedImage) {
+    init(frame frameRect: NSRect, capture: CapturedImage, defaultOutput: CaptureSettings.Output) {
         self.capture = capture
+        self.defaultOutput = defaultOutput
         super.init(frame: frameRect)
     }
 
@@ -45,6 +48,7 @@ final class RegionSelectionView: NSView {
             border.stroke()
 
             drawDimensions(for: selection)
+            drawToolbar(for: selection)
         } else {
             NSBezierPath.fill(bounds)
         }
@@ -52,6 +56,11 @@ final class RegionSelectionView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         let point = clamped(convert(event.locationInWindow, from: nil))
+        if let output = output(at: point) {
+            pendingOutput = output
+            needsDisplay = true
+            return
+        }
         dragStart = point
         dragCurrent = point
         needsDisplay = true
@@ -63,15 +72,24 @@ final class RegionSelectionView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if let output = pendingOutput {
+            pendingOutput = nil
+            guard let selection = selectionRect, let cropped = crop(selection) else {
+                onCancel?()
+                return
+            }
+            onSelection?(cropped, output)
+            return
+        }
         dragCurrent = clamped(convert(event.locationInWindow, from: nil))
         guard let selection = selectionRect,
               selection.width >= 2,
               selection.height >= 2,
-              let cropped = crop(selection) else {
+              crop(selection) != nil else {
             onCancel?()
             return
         }
-        onSelection?(cropped)
+        needsDisplay = true
     }
 
     override func keyDown(with event: NSEvent) {
@@ -129,5 +147,62 @@ final class RegionSelectionView: NSView {
             y: preferredY >= 8 ? preferredY : selection.maxY + 6
         )
         attributed.draw(at: origin)
+    }
+
+    private func drawToolbar(for selection: CGRect) {
+        let toolbar = toolbarRect(for: selection)
+        NSColor.black.withAlphaComponent(0.88).setFill()
+        NSBezierPath(roundedRect: toolbar, xRadius: 7, yRadius: 7).fill()
+
+        let actions: [(CaptureSettings.Output, String)] = [
+            (.copy, "复制"),
+            (.save, "保存 PNG"),
+            (.copyAndSave, "复制并保存")
+        ]
+        let buttonWidth = toolbar.width / CGFloat(actions.count)
+        for (index, action) in actions.enumerated() {
+            let rect = CGRect(
+                x: toolbar.minX + CGFloat(index) * buttonWidth,
+                y: toolbar.minY,
+                width: buttonWidth,
+                height: toolbar.height
+            )
+            if pendingOutput == action.0 || (pendingOutput == nil && defaultOutput == action.0) {
+                NSColor.controlAccentColor.withAlphaComponent(0.9).setFill()
+                NSBezierPath(roundedRect: rect.insetBy(dx: 2, dy: 2), xRadius: 5, yRadius: 5).fill()
+            }
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+                .foregroundColor: NSColor.white
+            ]
+            let title = NSAttributedString(string: action.1, attributes: attributes)
+            let titleSize = title.size()
+            title.draw(at: CGPoint(
+                x: rect.midX - titleSize.width / 2,
+                y: rect.midY - titleSize.height / 2
+            ))
+        }
+    }
+
+    private func toolbarRect(for selection: CGRect) -> CGRect {
+        let width: CGFloat = 228
+        let height: CGFloat = 34
+        let y = selection.minY - height - 8 >= bounds.minY
+            ? selection.minY - height - 8
+            : selection.maxY + 8
+        return CGRect(
+            x: min(max(selection.minX, bounds.minX + 8), bounds.maxX - width - 8),
+            y: min(max(y, bounds.minY + 8), bounds.maxY - height - 8),
+            width: width,
+            height: height
+        )
+    }
+
+    private func output(at point: CGPoint) -> CaptureSettings.Output? {
+        guard let selection = selectionRect else { return nil }
+        let toolbar = toolbarRect(for: selection)
+        guard toolbar.contains(point) else { return nil }
+        let index = min(2, max(0, Int((point.x - toolbar.minX) / (toolbar.width / 3))))
+        return [.copy, .save, .copyAndSave][index]
     }
 }
