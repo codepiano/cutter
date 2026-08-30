@@ -37,14 +37,25 @@ final class RegionSelectionView: NSView {
         case color(AnnotationColor)
     }
 
-    private enum AnnotationTool { case none, line, arrow, number, letter }
+    private enum AnnotationTool { case none, pen, line, arrow, number, letter }
     private enum AnnotationColor: CaseIterable {
         case red, orange, blue, green, black
         var color: NSColor {
             switch self { case .red: .systemRed; case .orange: .systemOrange; case .blue: .systemBlue; case .green: .systemGreen; case .black: .black }
         }
     }
-    private struct Annotation { let tool: AnnotationTool; let start: CGPoint; let end: CGPoint; let text: String?; let color: AnnotationColor }
+    private struct Annotation {
+        let tool: AnnotationTool
+        let start: CGPoint
+        let end: CGPoint
+        let text: String?
+        let color: AnnotationColor
+        let points: [CGPoint]
+        init(tool: AnnotationTool, start: CGPoint, end: CGPoint, text: String?, color: AnnotationColor, points: [CGPoint] = []) {
+            self.tool = tool; self.start = start; self.end = end; self.text = text; self.color = color; self.points = points
+        }
+    }
+    private var penPoints: [CGPoint] = []
 
     init(frame frameRect: NSRect, capture: CapturedImage, defaultOutput: CaptureSettings.Output) {
         self.capture = capture
@@ -132,9 +143,10 @@ final class RegionSelectionView: NSView {
             needsDisplay = true
             return
         }
-        if activeTool == .line || activeTool == .arrow, selectionRect?.contains(point) == true {
+        if activeTool == .pen || activeTool == .line || activeTool == .arrow, selectionRect?.contains(point) == true {
             annotationStart = point
             annotationCurrent = point
+            penPoints = [point]
             needsDisplay = true
             return
         }
@@ -171,13 +183,15 @@ final class RegionSelectionView: NSView {
                 start: original.start.applying(CGAffineTransform(translationX: dx, y: dy)),
                 end: original.end.applying(CGAffineTransform(translationX: dx, y: dy)),
                 text: original.text,
-                color: original.color
+                color: original.color,
+                points: original.points.map { $0.applying(CGAffineTransform(translationX: dx, y: dy)) }
             )
             needsDisplay = true
             return
         }
         if annotationStart != nil {
             annotationCurrent = point
+            if activeTool == .pen { penPoints.append(point) }
             needsDisplay = true
             return
         }
@@ -200,9 +214,10 @@ final class RegionSelectionView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         if let start = annotationStart, let end = annotationCurrent {
-            annotations.append(Annotation(tool: activeTool, start: start, end: end, text: nil, color: activeColor))
+            annotations.append(Annotation(tool: activeTool, start: start, end: end, text: nil, color: activeColor, points: penPoints))
             annotationStart = nil
             annotationCurrent = nil
+            penPoints = []
             needsDisplay = true
             return
         }
@@ -296,7 +311,13 @@ final class RegionSelectionView: NSView {
             context.setStrokeColor(annotation.color.color.cgColor)
             context.setFillColor(annotation.color.color.cgColor)
             context.setLineWidth(max(2, 2 * xScale))
-            if annotation.tool == .line || annotation.tool == .arrow {
+            if annotation.tool == .pen {
+                if let first = annotation.points.first {
+                    context.move(to: point(first))
+                    for sample in annotation.points.dropFirst() { context.addLine(to: point(sample)) }
+                    context.strokePath()
+                }
+            } else if annotation.tool == .line || annotation.tool == .arrow {
                 context.move(to: start); context.addLine(to: end); context.strokePath()
                 if annotation.tool == .arrow {
                     let angle = atan2(end.y - start.y, end.x - start.x)
@@ -375,12 +396,12 @@ final class RegionSelectionView: NSView {
             title.draw(at: CGPoint(x: rect.midX - size.width / 2, y: rect.midY + 1 - size.height / 2))
         }
 
-        let toolWidth: CGFloat = 188
+        let toolWidth: CGFloat = 220
         let tools: [(ToolbarAction, String)] = [
-            (.tool(.line), "直线"), (.tool(.arrow), "箭头"), (.tool(.number), "数字"), (.tool(.letter), "字母")
+            (.tool(.pen), "画笔"), (.tool(.line), "直线"), (.tool(.arrow), "箭头"), (.tool(.number), "数字"), (.tool(.letter), "字母")
         ]
         for (index, tool) in tools.enumerated() {
-            let rect = CGRect(x: toolbar.minX + CGFloat(index) * toolWidth / 4, y: toolbar.minY + 64, width: toolWidth / 4, height: 30)
+            let rect = CGRect(x: toolbar.minX + CGFloat(index) * toolWidth / 5, y: toolbar.minY + 64, width: toolWidth / 5, height: 30)
             if case let .tool(candidate) = tool.0, activeTool == candidate {
                 NSColor.controlAccentColor.withAlphaComponent(0.9).setFill()
                 NSBezierPath(roundedRect: rect.insetBy(dx: 2, dy: 2), xRadius: 5, yRadius: 5).fill()
@@ -474,10 +495,10 @@ final class RegionSelectionView: NSView {
             return [.output(.copy), .output(.save), .output(.copyAndSave), .cancel][index]
         }
         guard point.y > toolbar.minY + 64, point.y <= toolbar.minY + 96 else { return nil }
-        let toolWidth: CGFloat = 188
+        let toolWidth: CGFloat = 220
         if point.x < toolbar.minX + toolWidth {
-            let index = min(3, max(0, Int((point.x - toolbar.minX) / (toolWidth / 4))))
-            return [.tool(.line), .tool(.arrow), .tool(.number), .tool(.letter)][index]
+            let index = min(4, max(0, Int((point.x - toolbar.minX) / (toolWidth / 5))))
+            return [.tool(.pen), .tool(.line), .tool(.arrow), .tool(.number), .tool(.letter)][index]
         }
         let colors = AnnotationColor.allCases
         let colorWidth = (toolbar.width - toolWidth) / CGFloat(colors.count)
@@ -489,7 +510,13 @@ final class RegionSelectionView: NSView {
         for (index, annotation) in annotations.enumerated() {
             annotation.color.color.setStroke(); annotation.color.color.setFill()
             let path = NSBezierPath(); path.lineWidth = 2
-            if annotation.tool == .line || annotation.tool == .arrow {
+            if annotation.tool == .pen {
+                if let first = annotation.points.first {
+                    path.move(to: first)
+                    for point in annotation.points.dropFirst() { path.line(to: point) }
+                    path.stroke()
+                }
+            } else if annotation.tool == .line || annotation.tool == .arrow {
                 path.move(to: annotation.start); path.line(to: annotation.end); path.stroke()
             } else if let text = annotation.text {
                 let rect = CGRect(x: annotation.start.x - 14, y: annotation.start.y - 14, width: 28, height: 28)
@@ -504,7 +531,14 @@ final class RegionSelectionView: NSView {
             }
         }
         if let start = annotationStart, let end = annotationCurrent {
-            NSColor.systemRed.setStroke(); let path = NSBezierPath(); path.lineWidth = 2; path.move(to: start); path.line(to: end); path.stroke()
+            NSColor.systemRed.setStroke(); let path = NSBezierPath(); path.lineWidth = 2
+            if activeTool == .pen, let first = penPoints.first {
+                path.move(to: first)
+                for point in penPoints.dropFirst() { path.line(to: point) }
+            } else {
+                path.move(to: start); path.line(to: end)
+            }
+            path.stroke()
         }
     }
 

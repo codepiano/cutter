@@ -15,7 +15,7 @@ Cutter is a native macOS screenshot tool focused on still images. The current mi
 - Lets the user choose copy, download to `~/Pictures/Cutter`, or copy-and-download from that action bar.
 - Pressing Enter confirms the selection and copies it to the clipboard.
 - The action bar includes an explicit cancel button; `Esc` also cancels.
-- Includes line, arrow, numeric-label, and letter-label annotation tools with a shared color palette.
+- Includes pen, line, arrow, numeric-label, and letter-label annotation tools with a shared color palette.
 - Numeric and letter labels increment in order; Delete/Backspace removes the latest label and reindexes the remaining labels.
 - Remembers cursor and output preferences locally.
 
