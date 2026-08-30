@@ -22,7 +22,13 @@ final class RegionSelectionView: NSView {
     private var annotationStart: CGPoint?
     private var annotationCurrent: CGPoint?
     private var fixedSelection: CGRect?
-    private var movingFrom: (rect: CGRect, point: CGPoint)?
+    private var movingFrom: (
+        rect: CGRect,
+        point: CGPoint,
+        annotations: [Annotation],
+        undoStack: [[Annotation]],
+        redoStack: [[Annotation]]
+    )?
     private var resizingFrom: (rect: CGRect, point: CGPoint, handle: Handle)?
     private let widthField = NSTextField()
     private let heightField = NSTextField()
@@ -150,7 +156,7 @@ final class RegionSelectionView: NSView {
             return
         }
         if let selection = selectionRect, selection.contains(point) {
-            movingFrom = (selection, point)
+            movingFrom = (selection, point, annotations, undoStack, redoStack)
             return
         }
         dragStart = point
@@ -189,7 +195,13 @@ final class RegionSelectionView: NSView {
         if let movingFrom {
             let dx = point.x - movingFrom.point.x
             let dy = point.y - movingFrom.point.y
-            fixedSelection = movedRect(movingFrom.rect, dx: dx, dy: dy)
+            let movedSelection = movedRect(movingFrom.rect, dx: dx, dy: dy)
+            let appliedDX = movedSelection.minX - movingFrom.rect.minX
+            let appliedDY = movedSelection.minY - movingFrom.rect.minY
+            fixedSelection = movedSelection
+            annotations = movingFrom.annotations.map {
+                translated($0, dx: appliedDX, dy: appliedDY)
+            }
         } else if let resizingFrom {
             fixedSelection = resizedRect(
                 resizingFrom.rect,
@@ -215,6 +227,16 @@ final class RegionSelectionView: NSView {
         }
         movingAnnotationFrom = nil
         movingAnnotationDidChange = false
+        if let movingFrom, let movedSelection = selectionRect {
+            let appliedDX = movedSelection.minX - movingFrom.rect.minX
+            let appliedDY = movedSelection.minY - movingFrom.rect.minY
+            undoStack = movingFrom.undoStack.map { snapshot in
+                snapshot.map { translated($0, dx: appliedDX, dy: appliedDY) }
+            }
+            redoStack = movingFrom.redoStack.map { snapshot in
+                snapshot.map { translated($0, dx: appliedDX, dy: appliedDY) }
+            }
+        }
         movingFrom = nil
         resizingFrom = nil
         dragCurrent = clamped(convert(event.locationInWindow, from: nil))
@@ -378,24 +400,29 @@ final class RegionSelectionView: NSView {
 
     private func drawToolbar(for selection: CGRect) {
         let toolbar = toolbarRect(for: selection)
-        NSColor.black.withAlphaComponent(0.88).setFill()
-        NSBezierPath(roundedRect: toolbar, xRadius: 9, yRadius: 9).fill()
+        NSColor.black.withAlphaComponent(0.92).setFill()
+        NSBezierPath(roundedRect: toolbar, xRadius: 12, yRadius: 12).fill()
+
+        NSColor.white.withAlphaComponent(0.035).setFill()
+        NSBezierPath(
+            roundedRect: CGRect(x: toolbar.minX + 4, y: toolbar.minY + 44, width: toolbar.width - 8, height: 36),
+            xRadius: 8,
+            yRadius: 8
+        ).fill()
 
         NSColor.white.withAlphaComponent(0.12).setStroke()
-        for offset in [36.0, 66.0, 100.0] {
-            let separator = NSBezierPath()
-            separator.move(to: CGPoint(x: toolbar.minX + 6, y: toolbar.minY + offset))
-            separator.line(to: CGPoint(x: toolbar.maxX - 6, y: toolbar.minY + offset))
-            separator.lineWidth = 1
-            separator.stroke()
-        }
+        let separator = NSBezierPath()
+        separator.move(to: CGPoint(x: toolbar.minX + 8, y: toolbar.minY + 42))
+        separator.line(to: CGPoint(x: toolbar.maxX - 8, y: toolbar.minY + 42))
+        separator.lineWidth = 1
+        separator.stroke()
     }
 
     private func toolbarRect(for selection: CGRect) -> CGRect {
         let inset: CGFloat = 8
         let gap: CGFloat = 8
-        let width = max(0, min(380, bounds.width - inset * 2))
-        let height = max(0, min(132, bounds.height - inset * 2))
+        let width = max(0, min(660, bounds.width - inset * 2))
+        let height = max(0, min(84, bounds.height - inset * 2))
         let safeBounds = bounds.insetBy(dx: inset, dy: inset)
         let candidates = [
             CGRect(x: selection.minX, y: selection.minY - height - gap, width: width, height: height),
@@ -540,36 +567,69 @@ final class RegionSelectionView: NSView {
         let toolbar = toolbarRect(for: selection)
         toolbarViews.forEach { $0.isHidden = false }
 
-        let innerX = toolbar.minX + 4
-        let innerWidth = max(0, toolbar.width - 8)
-        let shapeWidth = innerWidth / CGFloat(shapeButtons.count)
+        let innerX = toolbar.minX + 6
+        let innerWidth = max(0, toolbar.width - 12)
+        let topY = toolbar.minY + 47
+        let topHeight: CGFloat = 30
+        let gap: CGFloat = 8
+
+        let shapeGroupWidth = min(150, innerWidth * 0.23)
+        let colorGroupWidth = min(130, innerWidth * 0.20)
+        let historyGroupWidth: CGFloat = min(60, innerWidth * 0.10)
+        let toolGroupWidth = max(
+            0,
+            innerWidth - shapeGroupWidth - colorGroupWidth - historyGroupWidth - gap * 3
+        )
+
+        let shapeWidth = shapeGroupWidth / CGFloat(shapeButtons.count)
         for (index, item) in shapeButtons.enumerated() {
-            item.button.frame = CGRect(x: innerX + CGFloat(index) * shapeWidth, y: toolbar.minY + 102, width: shapeWidth, height: 26)
+            item.button.frame = CGRect(
+                x: innerX + CGFloat(index) * shapeWidth,
+                y: topY,
+                width: shapeWidth,
+                height: topHeight
+            )
         }
 
-        let colorWidth = min(26, innerWidth / 12)
-        let colorTotal = colorWidth * CGFloat(colorButtons.count)
-        let toolWidth = max(0, innerWidth - colorTotal - 6)
-        let toolButtonWidth = toolWidth / CGFloat(toolButtons.count)
+        let toolX = innerX + shapeGroupWidth + gap
+        let toolButtonWidth = toolGroupWidth / CGFloat(toolButtons.count)
         for (index, item) in toolButtons.enumerated() {
-            item.button.frame = CGRect(x: innerX + CGFloat(index) * toolButtonWidth, y: toolbar.minY + 70, width: toolButtonWidth, height: 26)
+            item.button.frame = CGRect(
+                x: toolX + CGFloat(index) * toolButtonWidth,
+                y: topY,
+                width: toolButtonWidth,
+                height: topHeight
+            )
         }
+
+        let colorX = toolX + toolGroupWidth + gap
+        let colorWidth = colorGroupWidth / CGFloat(colorButtons.count)
         for (index, item) in colorButtons.enumerated() {
-            item.button.frame = CGRect(x: innerX + toolWidth + 6 + CGFloat(index) * colorWidth + 2, y: toolbar.minY + 73, width: max(16, colorWidth - 4), height: 20)
+            item.button.frame = CGRect(
+                x: colorX + CGFloat(index) * colorWidth + 2,
+                y: topY + 3,
+                width: max(18, colorWidth - 4),
+                height: 24
+            )
         }
 
-        dimensionLabel.frame = CGRect(x: innerX + 2, y: toolbar.minY + 42, width: 30, height: 20)
-        pixelLabel.frame = CGRect(x: innerX + 188, y: toolbar.minY + 42, width: 20, height: 20)
-        undoButton.frame = CGRect(x: toolbar.maxX - 66, y: toolbar.minY + 40, width: 28, height: 22)
-        redoButton.frame = CGRect(x: toolbar.maxX - 34, y: toolbar.minY + 40, width: 28, height: 22)
+        let historyX = colorX + colorGroupWidth + gap
+        undoButton.frame = CGRect(x: historyX, y: topY + 2, width: historyGroupWidth / 2, height: 26)
+        redoButton.frame = CGRect(x: historyX + historyGroupWidth / 2, y: topY + 2, width: historyGroupWidth / 2, height: 26)
 
+        let bottomY = toolbar.minY + 6
+        dimensionLabel.frame = CGRect(x: innerX + 2, y: bottomY + 5, width: 30, height: 20)
+        pixelLabel.frame = CGRect(x: innerX + 188, y: bottomY + 5, width: 20, height: 20)
+
+        let actionX = innerX + 218
+        let actionWidth = max(0, innerWidth - 218)
         let actionWeights: [CGFloat] = [0.20, 0.20, 0.36, 0.24]
-        var actionX = innerX
+        var nextActionX = actionX
         let actionButtons = outputButtons.map(\.button) + [cancelButton]
         for (index, button) in actionButtons.enumerated() {
-            let width = innerWidth * actionWeights[index]
-            button.frame = CGRect(x: actionX, y: toolbar.minY + 3, width: width, height: 30)
-            actionX += width
+            let width = actionWidth * actionWeights[index]
+            button.frame = CGRect(x: nextActionX, y: bottomY, width: width, height: 30)
+            nextActionX += width
         }
         updateToolbarControlStyles()
     }
@@ -736,6 +796,18 @@ final class RegionSelectionView: NSView {
         return hypot(point.x - projection.x, point.y - projection.y)
     }
 
+    private func translated(_ annotation: Annotation, dx: CGFloat, dy: CGFloat) -> Annotation {
+        let transform = CGAffineTransform(translationX: dx, y: dy)
+        return Annotation(
+            tool: annotation.tool,
+            start: annotation.start.applying(transform),
+            end: annotation.end.applying(transform),
+            text: annotation.text,
+            color: annotation.color,
+            points: annotation.points.map { $0.applying(transform) }
+        )
+    }
+
     private func registerAnnotationChange() {
         undoStack.append(annotations)
         if undoStack.count > 100 { undoStack.removeFirst() }
@@ -882,8 +954,8 @@ final class RegionSelectionView: NSView {
         }
         let toolbar = toolbarRect(for: selection)
         let fieldWidth: CGFloat = 66
-        let fieldHeight: CGFloat = 22
-        let y = toolbar.minY + 39
+        let fieldHeight: CGFloat = 24
+        let y = toolbar.minY + 9
         widthField.frame = CGRect(x: toolbar.minX + 38, y: y, width: fieldWidth, height: fieldHeight)
         dimensionSeparator.frame = CGRect(x: toolbar.minX + 104, y: y, width: 18, height: fieldHeight)
         heightField.frame = CGRect(x: toolbar.minX + 122, y: y, width: fieldWidth, height: fieldHeight)
