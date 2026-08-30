@@ -58,6 +58,7 @@ final class RegionSelectionController {
     private func finish(with result: (image: CGImage, output: CaptureSettings.Output)?) {
         guard let continuation else { return }
         self.continuation = nil
+        (window?.contentView as? RegionSelectionView)?.closeAuxiliaryPanels()
         window?.orderOut(nil)
         window = nil
         NSCursor.pop()

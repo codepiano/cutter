@@ -20,7 +20,7 @@ The app runs quietly from the macOS menu bar. Capture, selection overlays, permi
 
 - First platform: macOS.
 - Current capture mode: primary-display region capture.
-- Current editing: rectangle, square, and circle selections; precise pixel dimensions; persistent built-in and custom size presets; pen, line, arrow, numeric-label, and letter-label annotations; undo and redo.
+- Current editing: rectangle, square, and circle selections; precise pixel dimensions; persistent built-in and custom size presets; pen, line, arrow, numeric-label, and letter-label annotations with quick and arbitrary system colors; undo and redo.
 - Current outputs: copy, save to the local Pictures directory, or copy and save.
 - Future architecture: a reusable image-processing core with thin platform-specific shells.
 - Native platform code owns screen capture, coordinate conversion, permissions, shortcuts, clipboard behavior, and window management.

@@ -45,6 +45,9 @@ final class RegionSelectionView: NSView {
     private var shapeButtons: [(shape: CaptureSettings.Shape, button: NSButton)] = []
     private var toolButtons: [(tool: AnnotationTool, button: NSButton)] = []
     private var colorButtons: [(color: AnnotationColor, button: NSButton)] = []
+    private let customColorWell = NSColorWell(style: .expanded)
+    private var originalColorPanelLevel: NSWindow.Level?
+    private var originalColorPanelShowsAlpha: Bool?
     private var outputButtons: [(output: CaptureSettings.Output, button: NSButton)] = []
     private let cancelButton = NSButton()
     private let undoButton = NSButton()
@@ -59,13 +62,31 @@ final class RegionSelectionView: NSView {
     }
 
     private enum AnnotationTool { case none, pen, line, arrow, number, letter }
-    private enum AnnotationColor: CaseIterable {
-        case red, orange, blue, green, black
-        var color: NSColor {
-            switch self { case .red: .systemRed; case .orange: .systemOrange; case .blue: .systemBlue; case .green: .systemGreen; case .black: .black }
+    private struct AnnotationColor: Equatable {
+        static let red = AnnotationColor(color: .systemRed, name: "红色")
+        static let orange = AnnotationColor(color: .systemOrange, name: "橙色")
+        static let blue = AnnotationColor(color: .systemBlue, name: "蓝色")
+        static let green = AnnotationColor(color: .systemGreen, name: "绿色")
+        static let black = AnnotationColor(color: .black, name: "黑色")
+        static let presets = [red, orange, blue, green, black]
+
+        let color: NSColor
+        let name: String
+
+        init(color: NSColor, name: String) {
+            self.color = color.usingColorSpace(.sRGB) ?? color
+            self.name = name
         }
-        var name: String {
-            switch self { case .red: "红色"; case .orange: "橙色"; case .blue: "蓝色"; case .green: "绿色"; case .black: "黑色" }
+
+        static func == (lhs: AnnotationColor, rhs: AnnotationColor) -> Bool {
+            guard let left = lhs.color.usingColorSpace(.sRGB),
+                  let right = rhs.color.usingColorSpace(.sRGB) else {
+                return lhs.color == rhs.color
+            }
+            return abs(left.redComponent - right.redComponent) < 0.001
+                && abs(left.greenComponent - right.greenComponent) < 0.001
+                && abs(left.blueComponent - right.blueComponent) < 0.001
+                && abs(left.alphaComponent - right.alphaComponent) < 0.001
         }
     }
     private struct Annotation {
@@ -494,7 +515,7 @@ final class RegionSelectionView: NSView {
             toolButtons.append((tool, button))
         }
 
-        for color in AnnotationColor.allCases {
+        for color in AnnotationColor.presets {
             let button = makeToolbarButton(title: "", fontSize: 11)
             button.target = self
             button.action = #selector(selectColor(_:))
@@ -502,6 +523,18 @@ final class RegionSelectionView: NSView {
             button.setAccessibilityLabel("标注颜色：\(color.name)")
             colorButtons.append((color, button))
         }
+
+        customColorWell.color = activeColor.color
+        customColorWell.supportsAlpha = false
+        customColorWell.image = NSImage(systemSymbolName: "paintpalette", accessibilityDescription: "系统调色板")
+        customColorWell.target = self
+        customColorWell.action = #selector(selectCustomColor(_:))
+        customColorWell.toolTip = "自定义标注颜色"
+        customColorWell.focusRingType = .default
+        customColorWell.isHidden = true
+        customColorWell.setAccessibilityLabel("自定义标注颜色")
+        addSubview(customColorWell)
+        prepareColorPanel()
 
         let outputs: [(CaptureSettings.Output, String)] = [(.copy, "复制"), (.save, "存储"), (.copyAndSave, "复制并存储")]
         for (output, title) in outputs {
@@ -547,6 +580,24 @@ final class RegionSelectionView: NSView {
         updateToolbarControlStyles()
     }
 
+    private func prepareColorPanel() {
+        let panel = NSColorPanel.shared
+        originalColorPanelLevel = panel.level
+        originalColorPanelShowsAlpha = panel.showsAlpha
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
+        panel.showsAlpha = false
+    }
+
+    func closeAuxiliaryPanels() {
+        guard NSColorPanel.sharedColorPanelExists else { return }
+        let panel = NSColorPanel.shared
+        panel.orderOut(nil)
+        if let originalColorPanelLevel { panel.level = originalColorPanelLevel }
+        if let originalColorPanelShowsAlpha { panel.showsAlpha = originalColorPanelShowsAlpha }
+        originalColorPanelLevel = nil
+        originalColorPanelShowsAlpha = nil
+    }
+
     private func makeToolbarButton(title: String, fontSize: CGFloat) -> NSButton {
         let button = NSButton()
         configureTextButton(button, title: title, fontSize: fontSize)
@@ -589,6 +640,7 @@ final class RegionSelectionView: NSView {
         var views: [NSView] = shapeButtons.map { $0.button }
         views.append(contentsOf: toolButtons.map { $0.button })
         views.append(contentsOf: colorButtons.map { $0.button })
+        views.append(customColorWell)
         views.append(contentsOf: outputButtons.map { $0.button })
         views.append(contentsOf: [cancelButton, undoButton, redoButton, dimensionApplyButton, presetButton, dimensionLabel, pixelLabel])
         return views
@@ -609,7 +661,7 @@ final class RegionSelectionView: NSView {
         let gap: CGFloat = 8
 
         let shapeGroupWidth = min(150, innerWidth * 0.23)
-        let colorGroupWidth = min(130, innerWidth * 0.20)
+        let colorGroupWidth = min(180, innerWidth * 0.25)
         let historyGroupWidth: CGFloat = min(60, innerWidth * 0.10)
         let toolGroupWidth = max(
             0,
@@ -638,7 +690,9 @@ final class RegionSelectionView: NSView {
         }
 
         let colorX = toolX + toolGroupWidth + gap
-        let colorWidth = colorGroupWidth / CGFloat(colorButtons.count)
+        let colorWellWidth = min(42, colorGroupWidth * 0.25)
+        let swatchGroupWidth = max(0, colorGroupWidth - colorWellWidth - 6)
+        let colorWidth = swatchGroupWidth / CGFloat(colorButtons.count)
         for (index, item) in colorButtons.enumerated() {
             item.button.frame = CGRect(
                 x: colorX + CGFloat(index) * colorWidth + 2,
@@ -647,6 +701,12 @@ final class RegionSelectionView: NSView {
                 height: 24
             )
         }
+        customColorWell.frame = CGRect(
+            x: colorX + swatchGroupWidth + 6,
+            y: topY + 1,
+            width: colorWellWidth,
+            height: 28
+        )
 
         let historyX = colorX + colorGroupWidth + gap
         undoButton.frame = CGRect(x: historyX, y: topY + 2, width: historyGroupWidth / 2, height: 26)
@@ -680,6 +740,8 @@ final class RegionSelectionView: NSView {
             item.button.layer?.borderWidth = item.color == activeColor ? 2 : 1
             item.button.layer?.borderColor = (item.color == activeColor ? NSColor.white : NSColor.white.withAlphaComponent(0.35)).cgColor
         }
+        customColorWell.color = activeColor.color
+        customColorWell.setAccessibilityValue(activeColor.name)
         for item in outputButtons {
             style(item.button, selected: item.output == defaultOutput, prominent: item.output == defaultOutput)
         }
@@ -792,6 +854,12 @@ final class RegionSelectionView: NSView {
     @objc private func selectColor(_ sender: NSButton) {
         guard let color = colorButtons.first(where: { $0.button === sender })?.color else { return }
         activeColor = color
+        updateToolbarControlStyles()
+        needsDisplay = true
+    }
+
+    @objc private func selectCustomColor(_ sender: NSColorWell) {
+        activeColor = AnnotationColor(color: sender.color, name: "自定义颜色")
         updateToolbarControlStyles()
         needsDisplay = true
     }
