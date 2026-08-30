@@ -15,6 +15,8 @@ final class RegionSelectionView: NSView {
     private var activeTool: AnnotationTool = .none
     private var activeColor: AnnotationColor = .red
     private var annotations: [Annotation] = []
+    private var selectedAnnotationIndex: Int?
+    private var movingAnnotationFrom: (index: Int, point: CGPoint, annotation: Annotation)?
     private var annotationStart: CGPoint?
     private var annotationCurrent: CGPoint?
     private var fixedSelection: CGRect?
@@ -117,6 +119,12 @@ final class RegionSelectionView: NSView {
             needsDisplay = true
             return
         }
+        if let index = annotation(at: point) {
+            selectedAnnotationIndex = index
+            movingAnnotationFrom = (index, point, annotations[index])
+            needsDisplay = true
+            return
+        }
         if activeTool == .number || activeTool == .letter, selectionRect?.contains(point) == true {
             let index = annotations.filter { $0.tool == activeTool }.count + 1
             let text = activeTool == .number ? "\(index)" : String(UnicodeScalar(64 + index)!)
@@ -154,6 +162,20 @@ final class RegionSelectionView: NSView {
 
     override func mouseDragged(with event: NSEvent) {
         let point = clamped(convert(event.locationInWindow, from: nil))
+        if let movingAnnotationFrom {
+            let dx = point.x - movingAnnotationFrom.point.x
+            let dy = point.y - movingAnnotationFrom.point.y
+            let original = movingAnnotationFrom.annotation
+            annotations[movingAnnotationFrom.index] = Annotation(
+                tool: original.tool,
+                start: original.start.applying(CGAffineTransform(translationX: dx, y: dy)),
+                end: original.end.applying(CGAffineTransform(translationX: dx, y: dy)),
+                text: original.text,
+                color: original.color
+            )
+            needsDisplay = true
+            return
+        }
         if annotationStart != nil {
             annotationCurrent = point
             needsDisplay = true
@@ -184,6 +206,7 @@ final class RegionSelectionView: NSView {
             needsDisplay = true
             return
         }
+        movingAnnotationFrom = nil
         if let output = pendingOutput {
             pendingOutput = nil
             complete(output: output)
@@ -463,7 +486,7 @@ final class RegionSelectionView: NSView {
     }
 
     private func drawAnnotations() {
-        for annotation in annotations {
+        for (index, annotation) in annotations.enumerated() {
             annotation.color.color.setStroke(); annotation.color.color.setFill()
             let path = NSBezierPath(); path.lineWidth = 2
             if annotation.tool == .line || annotation.tool == .arrow {
@@ -471,6 +494,12 @@ final class RegionSelectionView: NSView {
             } else if let text = annotation.text {
                 let rect = CGRect(x: annotation.start.x - 14, y: annotation.start.y - 14, width: 28, height: 28)
                 NSBezierPath(ovalIn: rect).fill()
+                if index == selectedAnnotationIndex {
+                    NSColor.white.setStroke()
+                    let selectionRing = NSBezierPath(ovalIn: rect.insetBy(dx: -3, dy: -3))
+                    selectionRing.lineWidth = 2
+                    selectionRing.stroke()
+                }
                 NSAttributedString(string: text, attributes: [.font: NSFont.boldSystemFont(ofSize: 13), .foregroundColor: NSColor.white]).draw(at: CGPoint(x: annotation.start.x - 4, y: annotation.start.y - 7))
             }
         }
@@ -480,10 +509,20 @@ final class RegionSelectionView: NSView {
     }
 
     private func deleteLastLabel() {
-        guard let index = annotations.lastIndex(where: { $0.tool == .number || $0.tool == .letter }) else { return }
+        let index = selectedAnnotationIndex ?? annotations.lastIndex(where: { $0.tool == .number || $0.tool == .letter })
+        guard let index, annotations.indices.contains(index),
+              (annotations[index].tool == .number || annotations[index].tool == .letter) else { return }
         annotations.remove(at: index)
+        selectedAnnotationIndex = nil
         renumberLabels()
         needsDisplay = true
+    }
+
+    private func annotation(at point: CGPoint) -> Int? {
+        annotations.lastIndex { annotation in
+            guard annotation.tool == .number || annotation.tool == .letter else { return false }
+            return hypot(annotation.start.x - point.x, annotation.start.y - point.y) <= 18
+        }
     }
 
     private func renumberLabels() {
