@@ -2,3 +2,12 @@
 .DS_Store
 .omx/
 .control-panel/
+
+# Impeccable local reports and machine-specific runtime state.
+# Shared config.json, surface briefs, design sidecars, mocks, and critique/ignore.md remain versionable.
+.impeccable/critique/*.md
+!.impeccable/critique/ignore.md
+.impeccable/config.local.json
+.impeccable/hook.cache.json
+.impeccable/hook.pending.json
+.impeccable/live/

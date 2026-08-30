@@ -1,60 +1,180 @@
 # Cutter
 
-Cutter is a native macOS screenshot tool focused on still images. The current milestone is a small, compilable menu-bar shell backed by ScreenCaptureKit.
+Cutter 是一个原生 macOS 静态截图工具，专注于快速完成区域选择、精确尺寸调整、标注、复制和存储。截图与标注数据默认只在本机处理，不上传到网络。
 
-## Current capabilities
+## 系统要求
 
-- Runs as a menu-bar application.
-- Reports macOS screen-capture permission state.
-- Freezes the primary display through ScreenCaptureKit.
-- Presents a native drag-selection overlay with live pixel dimensions.
-- Supports rectangle, square, and circle selection templates with eight resize handles.
-- Crops the frozen image and copies the selected region to the system clipboard.
-- Registers a global `⌥⌘2` shortcut for capture, including when Cutter is not focused.
-- Shows an action bar next to the selection rectangle and keeps every editing tool visible.
-- Lets the user choose copy, save to `~/Pictures/Cutter`, or copy-and-save from that action bar.
-- Includes built-in `200×200`, `400×400`, `800×600`, and `1280×720` size presets, plus persistent custom presets saved from the current dimensions.
-- Pressing Enter confirms the selection with the remembered output action.
-- The action bar includes an explicit cancel button; `Esc` also cancels.
-- Includes pen, line, arrow, numeric-label, and letter-label annotation tools with a shared color palette.
-- Numeric and letter labels increment in order; Delete/Backspace removes the selected or latest annotation and reindexes the remaining labels.
-- Remembers cursor and output preferences locally.
+- macOS 14 或更高版本。
+- 首次截图前，需要在“系统设置 → 隐私与安全性 → 屏幕录制”中允许 Cutter 读取屏幕内容。
+- 全局快捷键为 `⌥⌘2`。
 
-Pinning, scrolling capture, multi-display selection, and window/full-screen capture are planned but not implemented yet.
+## 快速开始
 
-## Build the development executable
+1. 启动 Cutter。应用会驻留在菜单栏，不显示常规主窗口。
+2. 按 `⌥⌘2`，Cutter 会冻结主显示器画面。
+3. 拖动鼠标建立选区。
+4. 使用选区手柄、尺寸输入、预设或标注工具调整截图。
+5. 选择“复制”“存储”或“复制并存储”。
+
+焦点不在尺寸输入框时，按 Return 会执行上次使用并记住的输出动作。
+
+## 选区与操作条
+
+操作条始终显示全部工具，不需要展开二级工具面板。
+
+### 选区形状
+
+- 矩形
+- 正方形
+- 圆形
+
+选区建立后可以拖动八个手柄缩放，也可以在“选择”模式下拖动选区。移动选区时，文字标签、画笔、直线和箭头会保持相对位置并随选区一起移动。
+
+### 标注工具
+
+- 选择：选择和移动已有标注。
+- 画笔：绘制自由路径。
+- 直线：绘制直线。
+- 箭头：绘制带箭头的直线。
+- 数字：按顺序添加数字标签。
+- 字母：按顺序添加字母标签；超过 Z 后继续使用 AA、AB 等编号。
+
+标注支持红、橙、蓝、绿、黑五种颜色。所有标注都可以选择、移动、删除、撤销和重做。
+
+### 精确尺寸
+
+宽度和高度使用截图像素，而不是界面点数。
+
+- 修改输入框后，“应用”按钮会高亮。
+- 应用成功后短暂显示“已应用”。
+- 非法数值只标红对应输入框，并保留原输入供修改。
+- 可以点击“应用”，也可以按 Return 提交尺寸。
+- 正方形和圆形模式由宽度决定边长，高度输入会禁用。
+
+如果要求的尺寸超出当前显示器，Cutter 会在显示器范围内保留尽可能大的选区，并更新输入框显示实际像素尺寸。
+
+### 尺寸预设
+
+点击尺寸区域旁的“预设…”可以使用或管理常用截图大小。
+
+内置预设：
+
+- `200×200`
+- `400×400`
+- `800×600`
+- `1280×720`
+
+自定义预设：
+
+1. 在宽高输入框中填写尺寸。
+2. 打开“预设…”。
+3. 选择“保存当前尺寸为预设”。
+
+自定义预设会持久保存在本机。再次打开菜单即可直接应用；可通过“删除自定义预设”移除，删除前会确认。内置尺寸和已有自定义尺寸不会被重复保存。
+
+非正方形预设会自动切换到矩形选区。应用预设后，预设按钮会显示当前尺寸。
+
+## 快捷键
+
+| 快捷键 | 动作 |
+|---|---|
+| `⌥⌘2` | 从任意应用开始区域截图 |
+| Return / 小键盘 Enter | 焦点不在尺寸输入框时，使用记住的输出动作完成截图 |
+| Esc | 先退出当前标注工具；再次按下取消截图 |
+| `V` | 选择工具 |
+| `P` | 画笔 |
+| `L` | 直线 |
+| `A` | 箭头 |
+| `N` | 数字标签 |
+| `T` | 字母标签 |
+| `⌘Z` | 撤销标注操作 |
+| `⇧⌘Z` | 重做标注操作 |
+| Delete / Backspace | 删除选中的标注；未选择时删除最后一个标注 |
+
+## 输出
+
+- 复制：将截图写入系统剪贴板。
+- 存储：将 PNG 写入 `~/Pictures/Cutter`。
+- 复制并存储：同时执行以上两个动作。
+
+上次使用的输出动作会保存在本机，并成为下次截图的默认动作。完成后，菜单栏图标和提示文本会明确区分复制、存储和复制并存储。
+
+## 菜单栏选项
+
+- 开始截图。
+- 查看截图方式；当前支持区域截图，窗口截图和全屏截图仍在计划中。
+- 设置是否包含鼠标指针。
+- 检查屏幕录制权限。
+- 退出 Cutter。
+
+## 构建与运行
+
+使用 SwiftPM 构建开发可执行文件：
 
 ```sh
 swift build
 ```
 
-SwiftPM produces a development executable rather than a signed `.app` bundle. The repository includes a local ad-hoc packaging script; full Xcode is only needed for the standard `xcodebuild`/XCTest workflow, release entitlements, and distribution signing.
-
-If the active Command Line Tools installation has a SwiftPM `PackageDescription` ABI mismatch, the source can still be compiled directly:
+如果当前 Command Line Tools 存在 SwiftPM `PackageDescription` ABI 不匹配，可使用直接编译脚本：
 
 ```sh
 ./scripts/build-dev.sh
 ```
 
-That fallback validates the native code and creates `.build/manual/CutterMac`; it does not replace the signed app-bundle build.
+该脚本输出 `.build/manual/CutterMac`。新增 Swift 源文件时，也要把它加入 `scripts/build-dev.sh` 的显式文件列表。
 
-当前开发环境的 Command Line Tools 不带 XCTest/Swift Testing 模块，因此测试 target 会在完整 Xcode 测试环境接入后补回；现阶段 `swift build` 和直接编译脚本负责源码验证。
-
-To create and launch an ad-hoc signed development app bundle:
+构建并签名本地 `.app`：
 
 ```sh
 ./scripts/build-app.sh
 open .build/Cutter.app
 ```
 
-The development app is signed with the local `Cutter Local Development` identity. On a new Mac, create that identity once:
+首次构建本地应用前需要创建开发签名身份：
 
 ```sh
 ./scripts/create-local-signing-identity.sh
 ```
 
-This certificate and private key stay in the login keychain and are never written to Git. The identity is for local use only; it is not an Apple Developer ID certificate and is not intended for distribution.
+该身份只保存在登录钥匙串中，不会写入仓库，也不是用于分发的 Apple Developer ID。
 
-## Architecture
+生命周期脚本：
 
-The macOS shell owns platform behavior. Cross-platform image logic will live behind a narrow bridge and will not depend on AppKit or ScreenCaptureKit. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+```sh
+./scripts/start.sh
+./scripts/status.sh
+./scripts/restart.sh
+./scripts/stop.sh
+```
+
+## 本机数据
+
+Cutter 使用 `UserDefaults` 保存：
+
+- 是否包含鼠标指针。
+- 上次使用的输出动作。
+- PNG 存储目录。
+- 自定义尺寸预设。
+
+截图图像仅在当前捕获流程、剪贴板或用户选择的本机输出目录中使用。
+
+## Impeccable 项目文件
+
+`.impeccable` 同时可能包含共享设计决策和本机生成状态，因此不整体忽略：
+
+- 可版本化：`config.json`、`design.json`、`surfaces/`、经确认的 `mocks/`，以及团队共享的 `critique/ignore.md`。
+- 不版本化：时间戳 critique 报告、`config.local.json`、hook 缓存和 `live/` 运行状态。
+
+后续 `$impeccable polish` 会读取本机最新的 critique 报告作为输入，因此完成或推翻报告中的建议后，应重新评审或删除过时报告，避免旧结论继续影响后续修改。
+
+## 当前边界
+
+当前版本尚未实现：
+
+- 窗口截图和全屏截图。
+- 多显示器同时选择。
+- 贴图置顶。
+- 滚动截图。
+- 屏幕录制和视频处理。
+
+架构与模块边界见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。

@@ -1,51 +1,126 @@
-# Cutter Architecture
+# Cutter 架构
 
-## Boundary
+## 目标与边界
 
-The architecture separates reusable image semantics from operating-system integration.
+Cutter 当前是原生 macOS 菜单栏应用。系统集成继续由 AppKit、ScreenCaptureKit 和 CoreGraphics 负责；未来可复用的图像语义与平台外壳保持分离。
 
 ```text
-User action
-    |
-macOS shell
-    |-- permissions
-    |-- screen and window discovery
-    |-- selection overlay and coordinate conversion
-    |-- clipboard, shortcuts, and floating windows
-    |
-Captured image boundary
-    |
-cross-platform core (planned Rust crate)
-    |-- image transforms
-    |-- annotation document and rendering
-    |-- undo and redo
-    |-- encoding and export policy
-    `-- scrolling-image stitching
+全局快捷键 / 菜单栏命令
+          |
+      AppDelegate
+          |
+ ScreenCaptureKitBackend  -- 屏幕权限、主显示器、冻结画面
+          |
+ RegionSelectionController -- 全屏无边框窗口与会话生命周期
+          |
+ RegionSelectionView       -- 选区、尺寸、预设、标注、撤销重做
+          |
+   +------+-----------------------+
+   |                              |
+ImageClipboard               ImageFileWriter
+   |                              |
+系统剪贴板                  ~/Pictures/Cutter
 ```
 
-The shell passes images across the boundary in physical pixels. It also supplies color-space and scale metadata. Annotation coordinates are expressed in image-pixel space, so Retina and mixed-DPI screen geometry never leaks into the reusable core.
+应用没有本地 HTTP 服务，也没有账户、云同步或网络上传路径。
 
-## macOS modules
+## 模块
 
-- `Application`: menu-bar lifecycle and user-facing commands.
-- `Capture`: a small `ScreenCaptureBackend` interface and the ScreenCaptureKit implementation.
-- `Permissions`: screen-capture authorization checks and requests.
-- `Clipboard`: native image publication.
+### `Application`
 
-The application layer asks for a screenshot. It does not know how ScreenCaptureKit discovers displays, constructs filters, or configures pixel dimensions.
+`AppDelegate` 负责：
 
-## Cross-platform core
+- 创建菜单栏图标和菜单。
+- 注册 `⌥⌘2` 全局快捷键。
+- 串联捕获、选区和输出流程。
+- 持久化上次使用的输出动作。
+- 根据复制、存储或复制并存储显示准确的完成反馈。
 
-The reusable core is deliberately not implemented in Swift. The intended implementation is Rust with a small C-compatible or generated bridge. Rust is not currently installed on this development machine, so this milestone stops at the native boundary instead of creating temporary Swift image-domain code that would later need to be replaced.
+### `Capture`
 
-## Next vertical slice
+- `ScreenCaptureBackend`：屏幕捕获抽象。
+- `ScreenCaptureKitBackend`：当前 macOS 实现，冻结主显示器图像并保留缩放信息。
+- `CaptureSettings`：鼠标指针、默认输出和存储目录。
+- `CaptureSizePreset` / `CaptureSizePresetStore`：内置尺寸、自定义尺寸校验、去重和 `UserDefaults` 持久化。
+- `ImageFileWriter`：PNG 本机输出。
 
-The next slice is region capture:
+### `Selection`
 
-1. Freeze one image for each display.
-2. Present one native borderless overlay per display.
-3. Convert the drag selection into physical image-pixel rectangles.
-4. Crop from the frozen image rather than recapturing after selection.
-5. Copy the result and expose save/edit/pin actions.
+`RegionSelectionController` 创建一个位于 `screenSaver` 层级的无边框 AppKit 窗口，持有一次截图选择会话，并通过 continuation 返回最终图像和输出动作。
 
-Freezing first makes the selected pixels deterministic and prevents overlay UI from appearing in the final capture.
+`RegionSelectionView` 负责：
+
+- 矩形、正方形和圆形选区。
+- 八个缩放手柄、选区移动和屏幕边界限制。
+- 精确像素输入、输入状态反馈和尺寸预设菜单。
+- 选择、画笔、直线、箭头、数字和字母标注。
+- 标注选择、移动、删除、撤销和重做。
+- 操作条布局、避让和辅助功能语义。
+- 将选区和标注渲染成最终 `CGImage`。
+
+### `Permissions`、`Clipboard` 与 `Shortcuts`
+
+- `ScreenCapturePermission`：查询和申请屏幕录制权限。
+- `ImageClipboard`：将图像发布到 macOS 剪贴板。
+- `GlobalShortcutService`：注册和释放全局快捷键。
+
+## 坐标空间
+
+捕获图像使用物理像素；AppKit 选区窗口使用界面点数。
+
+```text
+AppKit 选区点数
+  -- xScale / yScale --> 捕获图像像素矩形
+  -- 裁剪 -----------> 选区 CGImage
+  -- 标注映射 -------> 裁剪图像像素坐标
+```
+
+缩放比例来自捕获图像像素尺寸与覆盖窗口尺寸之比。尺寸输入和预设都以最终截图像素为单位。
+
+标注在一次选择会话中使用覆盖窗口坐标保存。移动选区时，当前标注及撤销/重做快照应用同一实际位移，因此标注相对选区的位置保持不变；输出时再映射到裁剪图像像素。
+
+## 尺寸预设
+
+内置预设是代码常量，不写入用户偏好。自定义预设使用 `capture.customSizePresets` 保存为 JSON，并遵循以下约束：
+
+- 宽高范围为 2–32768 像素。
+- 不保存内置尺寸的重复项。
+- 不保存重复的自定义尺寸。
+- 保持用户添加顺序。
+- 无法解码或不合法的数据不会进入菜单。
+
+应用非正方形预设时会切换到矩形选区。选区尺寸超出屏幕时，`fittedSelectionRect` 会先限制尺寸，再移动原点使选区保持在屏幕范围内；界面随后显示实际可用尺寸。
+
+## 本机持久化
+
+`UserDefaults` 当前保存：
+
+- `capture.includeCursor`
+- `capture.output`
+- `capture.downloadDirectory`
+- `capture.customSizePresets`
+
+这些设置只描述本机截图行为，不包含截图图像本身。
+
+## 构建路径
+
+仓库保留两条构建路径：
+
+1. `swift build`：由 SwiftPM 自动发现 `Sources/CutterMac` 下的源文件。
+2. `scripts/build-dev.sh`：直接调用 `swiftc`，源文件列表必须显式维护。
+
+`scripts/build-app.sh` 先调用 `build-dev.sh`，再把可执行文件放入 `.build/Cutter.app` 并使用本机开发身份签名。新增 Swift 文件时，应同时验证 SwiftPM、直接编译和 `.app` 打包三条路径。
+
+## 未来可复用核心
+
+长期方向仍是把图像变换、标注文档、撤销重做、编码策略和滚动拼接迁入可复用核心，macOS 外壳只保留屏幕权限、显示器发现、坐标转换、快捷键、剪贴板和窗口管理。
+
+在核心边界真正建立前，不创建临时的第二套标注或渲染模型；当前 Swift 实现保持单一数据流，避免未来迁移前先产生内部重复架构。
+
+## 当前未实现
+
+- 窗口截图和全屏截图。
+- 多显示器同时选择。
+- 贴图置顶。
+- 滚动截图。
+- 屏幕录制和视频编辑。

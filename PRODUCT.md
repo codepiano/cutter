@@ -19,11 +19,14 @@ The app runs quietly from the macOS menu bar. Capture, selection overlays, permi
 ## Capabilities and Constraints
 
 - First platform: macOS.
+- Current capture mode: primary-display region capture.
+- Current editing: rectangle, square, and circle selections; precise pixel dimensions; persistent built-in and custom size presets; pen, line, arrow, numeric-label, and letter-label annotations; undo and redo.
+- Current outputs: copy, save to the local Pictures directory, or copy and save.
 - Future architecture: a reusable image-processing core with thin platform-specific shells.
 - Native platform code owns screen capture, coordinate conversion, permissions, shortcuts, clipboard behavior, and window management.
 - The reusable core will own image transforms, annotation data, undo/redo, export rules, and later scrolling-image stitching.
-- No screen recording or video processing.
-- The initial milestone proves native capture before annotation and scrolling capture are added.
+- No accounts, network upload, cloud synchronization, screen recording, or video processing.
+- Window capture, full-screen capture, multi-display selection, pinning, and scrolling capture are not implemented yet.
 
 ## Product Principles
 
@@ -35,7 +38,7 @@ The app runs quietly from the macOS menu bar. Capture, selection overlays, permi
 
 ## Open Decisions
 
-- Exact first-release annotation tool set.
 - Whether scrolling capture belongs in version 1.0.
+- Whether pinning belongs in version 1.0.
 - Windows implementation schedule.
 - Distribution channel and signing strategy.
