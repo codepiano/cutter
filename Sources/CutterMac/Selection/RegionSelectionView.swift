@@ -15,6 +15,9 @@ final class RegionSelectionView: NSView {
     private var fixedSelection: CGRect?
     private var movingFrom: (rect: CGRect, point: CGPoint)?
     private var resizingFrom: (rect: CGRect, point: CGPoint, handle: Handle)?
+    private let widthField = NSTextField()
+    private let heightField = NSTextField()
+    private let dimensionSeparator = NSTextField(labelWithString: "×")
 
     private enum Handle {
         case topLeft, top, topRight, left, right, bottomLeft, bottom, bottomRight
@@ -24,6 +27,7 @@ final class RegionSelectionView: NSView {
         self.capture = capture
         self.defaultOutput = defaultOutput
         super.init(frame: frameRect)
+        configureDimensionFields()
     }
 
     @available(*, unavailable)
@@ -36,6 +40,7 @@ final class RegionSelectionView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
+        layoutDimensionFields()
 
         let background = NSImage(
             cgImage: capture.image,
@@ -276,11 +281,18 @@ final class RegionSelectionView: NSView {
                 y: rect.midY - titleSize.height / 2
             ))
         }
+
+        let dimensionAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11),
+            .foregroundColor: NSColor.white.withAlphaComponent(0.75)
+        ]
+        NSAttributedString(string: "像素", attributes: dimensionAttributes)
+            .draw(at: CGPoint(x: toolbar.minX + 8, y: toolbar.minY + 36))
     }
 
     private func toolbarRect(for selection: CGRect) -> CGRect {
         let width: CGFloat = 228
-        let height: CGFloat = 68
+        let height: CGFloat = 96
         let y = selection.minY - height - 8 >= bounds.minY
             ? selection.minY - height - 8
             : selection.maxY + 8
@@ -295,8 +307,7 @@ final class RegionSelectionView: NSView {
     private func output(at point: CGPoint) -> CaptureSettings.Output? {
         guard let selection = selectionRect else { return nil }
         let toolbar = toolbarRect(for: selection)
-        guard toolbar.contains(point) else { return nil }
-        guard point.y <= toolbar.minY + 34 else { return nil }
+        guard toolbar.contains(point), point.y <= toolbar.minY + 34 else { return nil }
         let index = min(2, max(0, Int((point.x - toolbar.minX) / (toolbar.width / 3))))
         return [.copy, .save, .copyAndSave][index]
     }
@@ -304,7 +315,7 @@ final class RegionSelectionView: NSView {
     private func shape(at point: CGPoint) -> CaptureSettings.Shape? {
         guard let selection = selectionRect else { return nil }
         let toolbar = toolbarRect(for: selection)
-        guard toolbar.contains(point), point.y > toolbar.minY + 34 else { return nil }
+        guard toolbar.contains(point), point.y > toolbar.minY + 64 else { return nil }
         let index = min(2, max(0, Int((point.x - toolbar.minX) / (toolbar.width / 3))))
         return [.rectangle, .square, .circle][index]
     }
@@ -374,4 +385,77 @@ final class RegionSelectionView: NSView {
         }
         onSelection?(cropped, output)
     }
+
+    private func configureDimensionFields() {
+        for field in [widthField, heightField] {
+            field.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+            field.alignment = .center
+            field.isEditable = true
+            field.isSelectable = true
+            field.focusRingType = .none
+            field.target = self
+            field.action = #selector(commitDimensionFields)
+            field.delegate = self
+            addSubview(field)
+        }
+        dimensionSeparator.alignment = .center
+        dimensionSeparator.textColor = .white
+        dimensionSeparator.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        dimensionSeparator.isHidden = true
+        addSubview(dimensionSeparator)
+    }
+
+    private func layoutDimensionFields() {
+        guard let selection = selectionRect else {
+            widthField.isHidden = true
+            heightField.isHidden = true
+            dimensionSeparator.isHidden = true
+            return
+        }
+        let toolbar = toolbarRect(for: selection)
+        let fieldWidth: CGFloat = 66
+        let fieldHeight: CGFloat = 22
+        let y = toolbar.minY + 39
+        widthField.frame = CGRect(x: toolbar.minX + 34, y: y, width: fieldWidth, height: fieldHeight)
+        dimensionSeparator.frame = CGRect(x: toolbar.minX + 103, y: y, width: 18, height: fieldHeight)
+        heightField.frame = CGRect(x: toolbar.minX + 122, y: y, width: fieldWidth, height: fieldHeight)
+        widthField.isHidden = false
+        heightField.isHidden = false
+        dimensionSeparator.isHidden = false
+        heightField.isEnabled = shape == .rectangle
+
+        let xScale = CGFloat(capture.image.width) / bounds.width
+        let yScale = CGFloat(capture.image.height) / bounds.height
+        if window?.firstResponder !== widthField.currentEditor() && window?.firstResponder !== heightField.currentEditor() {
+            widthField.stringValue = "\(Int(selection.width * xScale))"
+            heightField.stringValue = "\(Int(selection.height * yScale))"
+        }
+    }
+
+    @objc private func commitDimensionFields() {
+        guard let selection = selectionRect,
+              let width = Double(widthField.stringValue),
+              let height = Double(heightField.stringValue),
+              width >= 2,
+              height >= 2 else {
+            layoutDimensionFields()
+            return
+        }
+        let xScale = CGFloat(capture.image.width) / bounds.width
+        let yScale = CGFloat(capture.image.height) / bounds.height
+        let targetWidth = CGFloat(width) / xScale
+        let targetHeight = (shape == .rectangle ? CGFloat(height) : CGFloat(width)) / yScale
+        let center = CGPoint(x: selection.midX, y: selection.midY)
+        let requested = CGRect(
+            x: center.x - targetWidth / 2,
+            y: center.y - targetHeight / 2,
+            width: targetWidth,
+            height: targetHeight
+        )
+        fixedSelection = constrained(requested.intersection(bounds))
+        window?.makeFirstResponder(self)
+        needsDisplay = true
+    }
 }
+
+extension RegionSelectionView: NSTextFieldDelegate {}
