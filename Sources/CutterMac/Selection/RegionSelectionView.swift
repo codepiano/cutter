@@ -51,9 +51,13 @@ final class RegionSelectionView: NSView {
             outside.fill()
 
             NSColor.controlAccentColor.setStroke()
-            let border = shape == .rectangle
-                ? NSBezierPath(rect: selection.insetBy(dx: 0.5, dy: 0.5))
-                : NSBezierPath(ovalIn: selection.insetBy(dx: 0.5, dy: 0.5))
+            let border: NSBezierPath
+            switch shape {
+            case .rectangle, .square:
+                border = NSBezierPath(rect: selection.insetBy(dx: 0.5, dy: 0.5))
+            case .circle:
+                border = NSBezierPath(ovalIn: selection.insetBy(dx: 0.5, dy: 0.5))
+            }
             border.lineWidth = 1
             border.stroke()
 
