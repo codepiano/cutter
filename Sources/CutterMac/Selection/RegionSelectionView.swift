@@ -23,6 +23,11 @@ final class RegionSelectionView: NSView {
         case topLeft, top, topRight, left, right, bottomLeft, bottom, bottomRight
     }
 
+    private enum ToolbarAction {
+        case output(CaptureSettings.Output)
+        case cancel
+    }
+
     init(frame frameRect: NSRect, capture: CapturedImage, defaultOutput: CaptureSettings.Output) {
         self.capture = capture
         self.defaultOutput = defaultOutput
@@ -66,7 +71,7 @@ final class RegionSelectionView: NSView {
             border.lineWidth = 1
             border.stroke()
 
-            drawDimensions(for: selection)
+            drawDimensions(for: selection, near: dragCurrent ?? CGPoint(x: selection.maxX, y: selection.minY))
             drawToolbar(for: selection)
             drawHandles(for: selection)
         } else {
@@ -79,6 +84,10 @@ final class RegionSelectionView: NSView {
         if let output = output(at: point) {
             pendingOutput = output
             needsDisplay = true
+            return
+        }
+        if case .cancel? = toolbarAction(at: point) {
+            onCancel?()
             return
         }
         if let newShape = shape(at: point) {
@@ -206,7 +215,7 @@ final class RegionSelectionView: NSView {
         )
     }
 
-    private func drawDimensions(for selection: CGRect) {
+    private func drawDimensions(for selection: CGRect, near point: CGPoint) {
         let xScale = CGFloat(capture.image.width) / bounds.width
         let yScale = CGFloat(capture.image.height) / bounds.height
         let label = "\(Int(selection.width * xScale)) × \(Int(selection.height * yScale))"
@@ -217,10 +226,9 @@ final class RegionSelectionView: NSView {
         ]
         let attributed = NSAttributedString(string: "  \(label)  ", attributes: attributes)
         let size = attributed.size()
-        let preferredY = selection.minY - size.height - 6
         let origin = CGPoint(
-            x: min(max(selection.minX, 8), bounds.maxX - size.width - 8),
-            y: preferredY >= 8 ? preferredY : selection.maxY + 6
+            x: min(max(point.x + 14, 8), bounds.maxX - size.width - 8),
+            y: min(max(point.y + 14, 8), bounds.maxY - size.height - 8)
         )
         attributed.draw(at: origin)
     }
@@ -253,10 +261,11 @@ final class RegionSelectionView: NSView {
             title.draw(at: CGPoint(x: rect.midX - size.width / 2, y: rect.midY + 1 - size.height / 2))
         }
 
-        let actions: [(CaptureSettings.Output, String)] = [
-            (.copy, "复制"),
-            (.save, "下载"),
-            (.copyAndSave, "复制并下载")
+        let actions: [(ToolbarAction, String)] = [
+            (.output(.copy), "复制"),
+            (.output(.save), "下载"),
+            (.output(.copyAndSave), "复制并下载"),
+            (.cancel, "取消截图")
         ]
         let buttonWidth = toolbar.width / CGFloat(actions.count)
         for (index, action) in actions.enumerated() {
@@ -266,7 +275,8 @@ final class RegionSelectionView: NSView {
                 width: buttonWidth,
                 height: 32
             )
-            if pendingOutput == action.0 || (pendingOutput == nil && defaultOutput == action.0) {
+            if case let .output(output) = action.0,
+               pendingOutput == output || (pendingOutput == nil && defaultOutput == output) {
                 NSColor.controlAccentColor.withAlphaComponent(0.9).setFill()
                 NSBezierPath(roundedRect: rect.insetBy(dx: 2, dy: 2), xRadius: 5, yRadius: 5).fill()
             }
@@ -291,7 +301,7 @@ final class RegionSelectionView: NSView {
     }
 
     private func toolbarRect(for selection: CGRect) -> CGRect {
-        let width: CGFloat = 228
+        let width: CGFloat = 304
         let height: CGFloat = 96
         let y = selection.minY - height - 8 >= bounds.minY
             ? selection.minY - height - 8
@@ -308,8 +318,8 @@ final class RegionSelectionView: NSView {
         guard let selection = selectionRect else { return nil }
         let toolbar = toolbarRect(for: selection)
         guard toolbar.contains(point), point.y <= toolbar.minY + 34 else { return nil }
-        let index = min(2, max(0, Int((point.x - toolbar.minX) / (toolbar.width / 3))))
-        return [.copy, .save, .copyAndSave][index]
+        guard case let .output(output)? = toolbarAction(at: point) else { return nil }
+        return output
     }
 
     private func shape(at point: CGPoint) -> CaptureSettings.Shape? {
@@ -318,6 +328,14 @@ final class RegionSelectionView: NSView {
         guard toolbar.contains(point), point.y > toolbar.minY + 64 else { return nil }
         let index = min(2, max(0, Int((point.x - toolbar.minX) / (toolbar.width / 3))))
         return [.rectangle, .square, .circle][index]
+    }
+
+    private func toolbarAction(at point: CGPoint) -> ToolbarAction? {
+        guard let selection = selectionRect else { return nil }
+        let toolbar = toolbarRect(for: selection)
+        guard toolbar.contains(point), point.y <= toolbar.minY + 34 else { return nil }
+        let index = min(3, max(0, Int((point.x - toolbar.minX) / (toolbar.width / 4))))
+        return [.output(.copy), .output(.save), .output(.copyAndSave), .cancel][index]
     }
 
     private func drawHandles(for selection: CGRect) {

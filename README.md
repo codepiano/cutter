@@ -14,6 +14,7 @@ Cutter is a native macOS screenshot tool focused on still images. The current mi
 - Shows an action bar directly beneath the selection rectangle.
 - Lets the user choose copy, download to `~/Pictures/Cutter`, or copy-and-download from that action bar.
 - Pressing Enter confirms the selection and copies it to the clipboard.
+- The action bar includes an explicit cancel button; `Esc` also cancels.
 - Remembers cursor and output preferences locally.
 
 Annotation, pinning, scrolling capture, multi-display selection, and window/full-screen capture are planned but not implemented yet.
