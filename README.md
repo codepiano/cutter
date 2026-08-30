@@ -11,15 +11,15 @@ Cutter is a native macOS screenshot tool focused on still images. The current mi
 - Supports rectangle, square, and circle selection templates with eight resize handles.
 - Crops the frozen image and copies the selected region to the system clipboard.
 - Registers a global `⌥⌘2` shortcut for capture, including when Cutter is not focused.
-- Shows an action bar directly beneath the selection rectangle.
-- Lets the user choose copy, download to `~/Pictures/Cutter`, or copy-and-download from that action bar.
-- Pressing Enter confirms the selection and copies it to the clipboard.
+- Shows an action bar next to the selection rectangle and keeps every editing tool visible.
+- Lets the user choose copy, save to `~/Pictures/Cutter`, or copy-and-save from that action bar.
+- Pressing Enter confirms the selection with the remembered output action.
 - The action bar includes an explicit cancel button; `Esc` also cancels.
 - Includes pen, line, arrow, numeric-label, and letter-label annotation tools with a shared color palette.
-- Numeric and letter labels increment in order; Delete/Backspace removes the latest label and reindexes the remaining labels.
+- Numeric and letter labels increment in order; Delete/Backspace removes the selected or latest annotation and reindexes the remaining labels.
 - Remembers cursor and output preferences locally.
 
-Annotation, pinning, scrolling capture, multi-display selection, and window/full-screen capture are planned but not implemented yet.
+Pinning, scrolling capture, multi-display selection, and window/full-screen capture are planned but not implemented yet.
 
 ## Build the development executable
 

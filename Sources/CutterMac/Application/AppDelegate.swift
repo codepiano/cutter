@@ -128,7 +128,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         to: captureSettings.downloadDirectory
                     )
                 }
-                showStatusFeedback()
+                showStatusFeedback(for: result.output)
             } catch {
                 present(error: error)
             }
@@ -149,17 +149,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func showStatusFeedback() {
+    private func showStatusFeedback(for output: CaptureSettings.Output) {
+        let description: String
+        switch output {
+        case .copy: description = "截图已复制"
+        case .save: description = "截图已存储"
+        case .copyAndSave: description = "截图已复制并存储"
+        }
         statusItem?.button?.image = NSImage(
             systemSymbolName: "checkmark",
-            accessibilityDescription: "截图已复制"
+            accessibilityDescription: description
         )
+        statusItem?.button?.toolTip = description
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
             self?.statusItem?.button?.image = NSImage(
                 systemSymbolName: "viewfinder",
                 accessibilityDescription: "Cutter"
             )
+            self?.statusItem?.button?.toolTip = "Cutter（快捷键：⌥⌘2）"
         }
     }
 
