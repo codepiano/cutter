@@ -12,6 +12,11 @@ final class RegionSelectionView: NSView {
     private var dragStart: CGPoint?
     private var dragCurrent: CGPoint?
     private var pendingOutput: CaptureSettings.Output?
+    private var activeTool: AnnotationTool = .none
+    private var activeColor: AnnotationColor = .red
+    private var annotations: [Annotation] = []
+    private var annotationStart: CGPoint?
+    private var annotationCurrent: CGPoint?
     private var fixedSelection: CGRect?
     private var movingFrom: (rect: CGRect, point: CGPoint)?
     private var resizingFrom: (rect: CGRect, point: CGPoint, handle: Handle)?
@@ -26,7 +31,18 @@ final class RegionSelectionView: NSView {
     private enum ToolbarAction {
         case output(CaptureSettings.Output)
         case cancel
+        case tool(AnnotationTool)
+        case color(AnnotationColor)
     }
+
+    private enum AnnotationTool { case none, line, arrow, number, letter }
+    private enum AnnotationColor: CaseIterable {
+        case red, orange, blue, green, black
+        var color: NSColor {
+            switch self { case .red: .systemRed; case .orange: .systemOrange; case .blue: .systemBlue; case .green: .systemGreen; case .black: .black }
+        }
+    }
+    private struct Annotation { let tool: AnnotationTool; let start: CGPoint; let end: CGPoint; let text: String?; let color: AnnotationColor }
 
     init(frame frameRect: NSRect, capture: CapturedImage, defaultOutput: CaptureSettings.Output) {
         self.capture = capture
@@ -74,6 +90,7 @@ final class RegionSelectionView: NSView {
             drawDimensions(for: selection, near: dragCurrent ?? CGPoint(x: selection.maxX, y: selection.minY))
             drawToolbar(for: selection)
             drawHandles(for: selection)
+            drawAnnotations()
         } else {
             NSBezierPath.fill(bounds)
         }
@@ -88,6 +105,29 @@ final class RegionSelectionView: NSView {
         }
         if case .cancel? = toolbarAction(at: point) {
             onCancel?()
+            return
+        }
+        if case let .tool(tool)? = toolbarAction(at: point) {
+            activeTool = tool
+            needsDisplay = true
+            return
+        }
+        if case let .color(color)? = toolbarAction(at: point) {
+            activeColor = color
+            needsDisplay = true
+            return
+        }
+        if activeTool == .number || activeTool == .letter, selectionRect?.contains(point) == true {
+            let index = annotations.filter { $0.tool == activeTool }.count + 1
+            let text = activeTool == .number ? "\(index)" : String(UnicodeScalar(64 + index)!)
+            annotations.append(Annotation(tool: activeTool, start: point, end: point, text: text, color: activeColor))
+            needsDisplay = true
+            return
+        }
+        if activeTool == .line || activeTool == .arrow, selectionRect?.contains(point) == true {
+            annotationStart = point
+            annotationCurrent = point
+            needsDisplay = true
             return
         }
         if let newShape = shape(at: point) {
@@ -114,6 +154,11 @@ final class RegionSelectionView: NSView {
 
     override func mouseDragged(with event: NSEvent) {
         let point = clamped(convert(event.locationInWindow, from: nil))
+        if annotationStart != nil {
+            annotationCurrent = point
+            needsDisplay = true
+            return
+        }
         if let movingFrom {
             let dx = point.x - movingFrom.point.x
             let dy = point.y - movingFrom.point.y
@@ -132,6 +177,13 @@ final class RegionSelectionView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if let start = annotationStart, let end = annotationCurrent {
+            annotations.append(Annotation(tool: activeTool, start: start, end: end, text: nil, color: activeColor))
+            annotationStart = nil
+            annotationCurrent = nil
+            needsDisplay = true
+            return
+        }
         if let output = pendingOutput {
             pendingOutput = nil
             complete(output: output)
@@ -156,6 +208,8 @@ final class RegionSelectionView: NSView {
             onCancel?()
         } else if event.keyCode == 36 || event.keyCode == 76 {
             complete(output: .copy)
+        } else if event.keyCode == 51 || event.keyCode == 117 {
+            deleteLastLabel()
         } else {
             super.keyDown(with: event)
         }
@@ -189,7 +243,10 @@ final class RegionSelectionView: NSView {
         ).integral
 
         guard let cropped = capture.image.cropping(to: pixelRect) else { return nil }
-        guard shape == .circle else { return cropped }
+        return renderAnnotations(on: cropped, selection: selection)
+    }
+
+    private func renderAnnotations(on cropped: CGImage, selection: CGRect) -> CGImage? {
 
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         guard let context = CGContext(
@@ -201,10 +258,44 @@ final class RegionSelectionView: NSView {
             space: colorSpace,
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else { return nil }
-        context.clear(CGRect(x: 0, y: 0, width: cropped.width, height: cropped.height))
-        context.addEllipse(in: CGRect(x: 0, y: 0, width: cropped.width, height: cropped.height))
-        context.clip()
+        if shape == .circle {
+            context.clear(CGRect(x: 0, y: 0, width: cropped.width, height: cropped.height))
+            context.addEllipse(in: CGRect(x: 0, y: 0, width: cropped.width, height: cropped.height))
+            context.clip()
+        }
         context.draw(cropped, in: CGRect(x: 0, y: 0, width: cropped.width, height: cropped.height))
+        let xScale = CGFloat(cropped.width) / selection.width
+        let yScale = CGFloat(cropped.height) / selection.height
+        for annotation in annotations {
+            let point: (CGPoint) -> CGPoint = { p in CGPoint(x: (p.x - selection.minX) * xScale, y: (p.y - selection.minY) * yScale) }
+            let start = point(annotation.start)
+            let end = point(annotation.end)
+            context.setStrokeColor(annotation.color.color.cgColor)
+            context.setFillColor(annotation.color.color.cgColor)
+            context.setLineWidth(max(2, 2 * xScale))
+            if annotation.tool == .line || annotation.tool == .arrow {
+                context.move(to: start); context.addLine(to: end); context.strokePath()
+                if annotation.tool == .arrow {
+                    let angle = atan2(end.y - start.y, end.x - start.x)
+                    let head: CGFloat = 10 * xScale
+                    context.move(to: end)
+                    context.addLine(to: CGPoint(x: end.x - head * cos(angle - .pi / 6), y: end.y - head * sin(angle - .pi / 6)))
+                    context.move(to: end)
+                    context.addLine(to: CGPoint(x: end.x - head * cos(angle + .pi / 6), y: end.y - head * sin(angle + .pi / 6)))
+                    context.strokePath()
+                }
+            } else if let text = annotation.text {
+                let radius = 14 * xScale
+                context.fillEllipse(in: CGRect(x: start.x - radius, y: start.y - radius, width: radius * 2, height: radius * 2))
+                let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 13 * xScale), .foregroundColor: NSColor.white]
+                let string = NSAttributedString(string: text, attributes: attributes)
+                let size = string.size()
+                NSGraphicsContext.saveGraphicsState()
+                NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+                string.draw(at: CGPoint(x: start.x - size.width / 2, y: start.y - size.height / 2))
+                NSGraphicsContext.restoreGraphicsState()
+            }
+        }
         return context.makeImage()
     }
 
@@ -261,6 +352,27 @@ final class RegionSelectionView: NSView {
             title.draw(at: CGPoint(x: rect.midX - size.width / 2, y: rect.midY + 1 - size.height / 2))
         }
 
+        let toolWidth: CGFloat = 188
+        let tools: [(ToolbarAction, String)] = [
+            (.tool(.line), "直线"), (.tool(.arrow), "箭头"), (.tool(.number), "数字"), (.tool(.letter), "字母")
+        ]
+        for (index, tool) in tools.enumerated() {
+            let rect = CGRect(x: toolbar.minX + CGFloat(index) * toolWidth / 4, y: toolbar.minY + 64, width: toolWidth / 4, height: 30)
+            if case let .tool(candidate) = tool.0, activeTool == candidate {
+                NSColor.controlAccentColor.withAlphaComponent(0.9).setFill()
+                NSBezierPath(roundedRect: rect.insetBy(dx: 2, dy: 2), xRadius: 5, yRadius: 5).fill()
+            }
+            let title = NSAttributedString(string: tool.1, attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.white])
+            let size = title.size(); title.draw(at: CGPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2))
+        }
+        let colors = AnnotationColor.allCases
+        let colorWidth = (toolbar.width - toolWidth) / CGFloat(colors.count)
+        for (index, color) in colors.enumerated() {
+            let center = CGPoint(x: toolbar.minX + toolWidth + CGFloat(index) * colorWidth + colorWidth / 2, y: toolbar.minY + 79)
+            color.color.setFill(); NSBezierPath(ovalIn: CGRect(x: center.x - 7, y: center.y - 7, width: 14, height: 14)).fill()
+            if color == activeColor { NSColor.white.setStroke(); let ring = NSBezierPath(ovalIn: CGRect(x: center.x - 9, y: center.y - 9, width: 18, height: 18)); ring.lineWidth = 2; ring.stroke() }
+        }
+
         let actions: [(ToolbarAction, String)] = [
             (.output(.copy), "复制"),
             (.output(.save), "下载"),
@@ -302,7 +414,7 @@ final class RegionSelectionView: NSView {
 
     private func toolbarRect(for selection: CGRect) -> CGRect {
         let width: CGFloat = 304
-        let height: CGFloat = 96
+        let height: CGFloat = 128
         let y = selection.minY - height - 8 >= bounds.minY
             ? selection.minY - height - 8
             : selection.maxY + 8
@@ -325,7 +437,7 @@ final class RegionSelectionView: NSView {
     private func shape(at point: CGPoint) -> CaptureSettings.Shape? {
         guard let selection = selectionRect else { return nil }
         let toolbar = toolbarRect(for: selection)
-        guard toolbar.contains(point), point.y > toolbar.minY + 64 else { return nil }
+        guard toolbar.contains(point), point.y > toolbar.minY + 96 else { return nil }
         let index = min(2, max(0, Int((point.x - toolbar.minX) / (toolbar.width / 3))))
         return [.rectangle, .square, .circle][index]
     }
@@ -333,9 +445,59 @@ final class RegionSelectionView: NSView {
     private func toolbarAction(at point: CGPoint) -> ToolbarAction? {
         guard let selection = selectionRect else { return nil }
         let toolbar = toolbarRect(for: selection)
-        guard toolbar.contains(point), point.y <= toolbar.minY + 34 else { return nil }
-        let index = min(3, max(0, Int((point.x - toolbar.minX) / (toolbar.width / 4))))
-        return [.output(.copy), .output(.save), .output(.copyAndSave), .cancel][index]
+        guard toolbar.contains(point) else { return nil }
+        if point.y <= toolbar.minY + 34 {
+            let index = min(3, max(0, Int((point.x - toolbar.minX) / (toolbar.width / 4))))
+            return [.output(.copy), .output(.save), .output(.copyAndSave), .cancel][index]
+        }
+        guard point.y > toolbar.minY + 64, point.y <= toolbar.minY + 96 else { return nil }
+        let toolWidth: CGFloat = 188
+        if point.x < toolbar.minX + toolWidth {
+            let index = min(3, max(0, Int((point.x - toolbar.minX) / (toolWidth / 4))))
+            return [.tool(.line), .tool(.arrow), .tool(.number), .tool(.letter)][index]
+        }
+        let colors = AnnotationColor.allCases
+        let colorWidth = (toolbar.width - toolWidth) / CGFloat(colors.count)
+        let index = min(colors.count - 1, max(0, Int((point.x - toolbar.minX - toolWidth) / colorWidth)))
+        return .color(colors[index])
+    }
+
+    private func drawAnnotations() {
+        for annotation in annotations {
+            annotation.color.color.setStroke(); annotation.color.color.setFill()
+            let path = NSBezierPath(); path.lineWidth = 2
+            if annotation.tool == .line || annotation.tool == .arrow {
+                path.move(to: annotation.start); path.line(to: annotation.end); path.stroke()
+            } else if let text = annotation.text {
+                let rect = CGRect(x: annotation.start.x - 14, y: annotation.start.y - 14, width: 28, height: 28)
+                NSBezierPath(ovalIn: rect).fill()
+                NSAttributedString(string: text, attributes: [.font: NSFont.boldSystemFont(ofSize: 13), .foregroundColor: NSColor.white]).draw(at: CGPoint(x: annotation.start.x - 4, y: annotation.start.y - 7))
+            }
+        }
+        if let start = annotationStart, let end = annotationCurrent {
+            NSColor.systemRed.setStroke(); let path = NSBezierPath(); path.lineWidth = 2; path.move(to: start); path.line(to: end); path.stroke()
+        }
+    }
+
+    private func deleteLastLabel() {
+        guard let index = annotations.lastIndex(where: { $0.tool == .number || $0.tool == .letter }) else { return }
+        annotations.remove(at: index)
+        renumberLabels()
+        needsDisplay = true
+    }
+
+    private func renumberLabels() {
+        var number = 0
+        var letter = 0
+        annotations = annotations.map { annotation in
+            guard annotation.tool == .number || annotation.tool == .letter else { return annotation }
+            if annotation.tool == .number {
+                number += 1
+                return Annotation(tool: annotation.tool, start: annotation.start, end: annotation.end, text: "\(number)", color: annotation.color)
+            }
+            letter += 1
+            return Annotation(tool: annotation.tool, start: annotation.start, end: annotation.end, text: String(UnicodeScalar(64 + letter)!), color: annotation.color)
+        }
     }
 
     private func drawHandles(for selection: CGRect) {
