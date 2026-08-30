@@ -14,6 +14,7 @@ swiftc \
   "$project_dir/Sources/CutterMac/Capture/ScreenCaptureBackend.swift" \
   "$project_dir/Sources/CutterMac/Capture/ScreenCaptureKitBackend.swift" \
   "$project_dir/Sources/CutterMac/Capture/CaptureSettings.swift" \
+  "$project_dir/Sources/CutterMac/Capture/CaptureSizePreset.swift" \
   "$project_dir/Sources/CutterMac/Capture/ImageFileWriter.swift" \
   "$project_dir/Sources/CutterMac/Permissions/ScreenCapturePermission.swift" \
   "$project_dir/Sources/CutterMac/Clipboard/ImageClipboard.swift" \

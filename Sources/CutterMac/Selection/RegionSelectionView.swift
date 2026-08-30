@@ -36,6 +36,8 @@ final class RegionSelectionView: NSView {
     private let dimensionLabel = NSTextField(labelWithString: "尺寸")
     private let pixelLabel = NSTextField(labelWithString: "px")
     private let dimensionApplyButton = NSButton()
+    private let presetButton = NSButton()
+    private let presetStore: CaptureSizePresetStore
     private var dimensionFeedbackState: DimensionFeedbackState = .idle
     private var invalidWidth = false
     private var invalidHeight = false
@@ -79,9 +81,15 @@ final class RegionSelectionView: NSView {
     }
     private var penPoints: [CGPoint] = []
 
-    init(frame frameRect: NSRect, capture: CapturedImage, defaultOutput: CaptureSettings.Output) {
+    init(
+        frame frameRect: NSRect,
+        capture: CapturedImage,
+        defaultOutput: CaptureSettings.Output,
+        presetStore: CaptureSizePresetStore = CaptureSizePresetStore()
+    ) {
         self.capture = capture
         self.defaultOutput = defaultOutput
+        self.presetStore = presetStore
         super.init(frame: frameRect)
         configureDimensionFields()
         configureToolbarControls()
@@ -124,7 +132,9 @@ final class RegionSelectionView: NSView {
             border.lineWidth = 1
             border.stroke()
 
-            drawDimensions(for: selection, near: dragCurrent ?? CGPoint(x: selection.maxX, y: selection.minY))
+            if fixedSelection == nil {
+                drawDimensions(for: selection, near: dragCurrent ?? CGPoint(x: selection.maxX, y: selection.minY))
+            }
             drawToolbar(for: selection)
             drawHandles(for: selection)
             drawAnnotations()
@@ -139,6 +149,7 @@ final class RegionSelectionView: NSView {
             return
         }
         if let selection = selectionRect, let handle = handle(at: point) {
+            setPresetButtonTitle(nil)
             resizingFrom = (selection, point, handle)
             return
         }
@@ -171,6 +182,7 @@ final class RegionSelectionView: NSView {
         dragStart = point
         dragCurrent = point
         fixedSelection = nil
+        setPresetButtonTitle(nil)
         needsDisplay = true
     }
 
@@ -430,7 +442,7 @@ final class RegionSelectionView: NSView {
     private func toolbarRect(for selection: CGRect) -> CGRect {
         let inset: CGFloat = 8
         let gap: CGFloat = 8
-        let width = max(0, min(660, bounds.width - inset * 2))
+        let width = max(0, min(720, bounds.width - inset * 2))
         let height = max(0, min(84, bounds.height - inset * 2))
         let safeBounds = bounds.insetBy(dx: inset, dy: inset)
         let candidates = [
@@ -518,6 +530,13 @@ final class RegionSelectionView: NSView {
         dimensionApplyButton.setAccessibilityLabel("应用尺寸")
         addSubview(dimensionApplyButton)
 
+        configureTextButton(presetButton, title: "预设…", fontSize: 11)
+        presetButton.target = self
+        presetButton.action = #selector(showSizePresetMenu(_:))
+        presetButton.toolTip = "选择或管理常用截图尺寸"
+        presetButton.setAccessibilityLabel("尺寸预设")
+        addSubview(presetButton)
+
         for label in [dimensionLabel, pixelLabel] {
             label.textColor = NSColor.white.withAlphaComponent(0.72)
             label.font = NSFont.systemFont(ofSize: 11, weight: .medium)
@@ -571,7 +590,7 @@ final class RegionSelectionView: NSView {
         views.append(contentsOf: toolButtons.map { $0.button })
         views.append(contentsOf: colorButtons.map { $0.button })
         views.append(contentsOf: outputButtons.map { $0.button })
-        views.append(contentsOf: [cancelButton, undoButton, redoButton, dimensionApplyButton, dimensionLabel, pixelLabel])
+        views.append(contentsOf: [cancelButton, undoButton, redoButton, dimensionApplyButton, presetButton, dimensionLabel, pixelLabel])
         return views
     }
 
@@ -637,9 +656,10 @@ final class RegionSelectionView: NSView {
         dimensionLabel.frame = CGRect(x: innerX + 2, y: bottomY + 5, width: 30, height: 20)
         pixelLabel.frame = CGRect(x: innerX + 188, y: bottomY + 5, width: 20, height: 20)
         dimensionApplyButton.frame = CGRect(x: innerX + 214, y: bottomY, width: 56, height: 30)
+        presetButton.frame = CGRect(x: innerX + 278, y: bottomY, width: 74, height: 30)
 
-        let actionX = innerX + 278
-        let actionWidth = max(0, innerWidth - 278)
+        let actionX = innerX + 360
+        let actionWidth = max(0, innerWidth - 360)
         let actionWeights: [CGFloat] = [0.20, 0.20, 0.36, 0.24]
         var nextActionX = actionX
         let actionButtons = outputButtons.map(\.button) + [cancelButton]
@@ -664,6 +684,7 @@ final class RegionSelectionView: NSView {
             style(item.button, selected: item.output == defaultOutput, prominent: item.output == defaultOutput)
         }
         style(cancelButton, selected: false)
+        style(presetButton, selected: false)
         undoButton.isEnabled = !undoStack.isEmpty
         redoButton.isEnabled = !redoStack.isEmpty
         for button in [undoButton, redoButton] {
@@ -755,6 +776,7 @@ final class RegionSelectionView: NSView {
         shape = candidate
         if let selection = fixedSelection { fixedSelection = constrained(selection) }
         setDimensionFeedback(.idle)
+        setPresetButtonTitle(nil)
         updateToolbarControlStyles()
         needsDisplay = true
     }
@@ -777,6 +799,149 @@ final class RegionSelectionView: NSView {
     @objc private func performOutput(_ sender: NSButton) {
         guard let output = outputButtons.first(where: { $0.button === sender })?.output else { return }
         complete(output: output)
+    }
+
+    @objc private func showSizePresetMenu(_ sender: NSButton) {
+        let menu = NSMenu(title: "尺寸预设")
+        menu.autoenablesItems = false
+        menu.addItem(menuHeader("内置尺寸"))
+        for preset in CaptureSizePreset.builtIns {
+            menu.addItem(presetMenuItem(preset, action: #selector(applySizePreset(_:))))
+        }
+
+        let customPresets = presetStore.customPresets
+        if !customPresets.isEmpty {
+            menu.addItem(.separator())
+            menu.addItem(menuHeader("自定义尺寸"))
+            for preset in customPresets {
+                menu.addItem(presetMenuItem(preset, action: #selector(applySizePreset(_:))))
+            }
+        }
+
+        menu.addItem(.separator())
+        let saveItem = NSMenuItem(title: "保存当前尺寸为预设", action: #selector(saveCurrentSizePreset), keyEquivalent: "")
+        saveItem.target = self
+        saveItem.isEnabled = true
+        menu.addItem(saveItem)
+
+        if !customPresets.isEmpty {
+            let deleteItem = NSMenuItem(title: "删除自定义预设", action: nil, keyEquivalent: "")
+            let deleteMenu = NSMenu(title: "删除自定义预设")
+            for preset in customPresets {
+                deleteMenu.addItem(presetMenuItem(preset, action: #selector(confirmDeleteSizePreset(_:))))
+            }
+            deleteItem.submenu = deleteMenu
+            deleteItem.isEnabled = true
+            menu.addItem(deleteItem)
+        }
+
+        menu.popUp(positioning: nil, at: CGPoint(x: 0, y: sender.bounds.height + 4), in: sender)
+    }
+
+    private func menuHeader(_ title: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        return item
+    }
+
+    private func presetMenuItem(_ preset: CaptureSizePreset, action: Selector) -> NSMenuItem {
+        let item = NSMenuItem(title: preset.title, action: action, keyEquivalent: "")
+        item.target = self
+        item.representedObject = preset.identifier
+        item.isEnabled = true
+        return item
+    }
+
+    private func preset(from menuItem: NSMenuItem) -> CaptureSizePreset? {
+        guard let identifier = menuItem.representedObject as? String else { return nil }
+        let parts = identifier.split(separator: "x", maxSplits: 1).compactMap { Int($0) }
+        guard parts.count == 2 else { return nil }
+        return CaptureSizePreset(width: parts[0], height: parts[1])
+    }
+
+    @objc private func applySizePreset(_ sender: NSMenuItem) {
+        guard let preset = preset(from: sender) else { return }
+        if preset.width != preset.height && shape != .rectangle {
+            shape = .rectangle
+            updateToolbarControlStyles()
+        }
+        widthField.stringValue = "\(preset.width)"
+        heightField.stringValue = "\(preset.height)"
+        setDimensionFeedback(.editing)
+        commitDimensionFields()
+        setPresetButtonTitle(currentSelectionSizePreset()?.compactTitle ?? preset.compactTitle)
+    }
+
+    @objc private func saveCurrentSizePreset() {
+        guard let preset = presetFromDimensionFields() else { return }
+        commitDimensionFields()
+        let added = presetStore.add(preset)
+        setPresetButtonTitle(preset.compactTitle)
+        presetButton.toolTip = added
+            ? "已保存自定义尺寸：\(preset.title)"
+            : "尺寸预设已存在：\(preset.title)"
+        if !added { NSSound.beep() }
+    }
+
+    @objc private func confirmDeleteSizePreset(_ sender: NSMenuItem) {
+        guard let preset = preset(from: sender) else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "删除自定义尺寸预设？"
+        alert.informativeText = preset.title
+        alert.addButton(withTitle: "删除")
+        alert.addButton(withTitle: "取消")
+        alert.window.level = .screenSaver
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        if presetStore.remove(preset), presetButton.attributedTitle.string == preset.compactTitle {
+            setPresetButtonTitle(nil)
+        }
+    }
+
+    private func presetFromDimensionFields() -> CaptureSizePreset? {
+        let parsedWidth = Double(widthField.stringValue)
+        let parsedHeight = Double(heightField.stringValue)
+        let widthIsValid = parsedWidth.map { $0.isFinite && $0.rounded() == $0 } ?? false
+        let heightIsValid = shape != .rectangle
+            || (parsedHeight.map { $0.isFinite && $0.rounded() == $0 } ?? false)
+        guard widthIsValid,
+              heightIsValid,
+              let width = parsedWidth.map(Int.init) else {
+            NSSound.beep()
+            setDimensionFeedback(
+                .error,
+                invalidWidth: !widthIsValid,
+                invalidHeight: !heightIsValid
+            )
+            return nil
+        }
+        let height = shape == .rectangle ? parsedHeight.map(Int.init) ?? width : width
+        guard let preset = CaptureSizePreset(width: width, height: height) else {
+            NSSound.beep()
+            setDimensionFeedback(.error, invalidWidth: true, invalidHeight: shape == .rectangle)
+            return nil
+        }
+        return preset
+    }
+
+    private func currentSelectionSizePreset() -> CaptureSizePreset? {
+        guard let selection = selectionRect else { return nil }
+        let xScale = CGFloat(capture.image.width) / bounds.width
+        let yScale = CGFloat(capture.image.height) / bounds.height
+        return CaptureSizePreset(
+            width: Int((selection.width * xScale).rounded()),
+            height: Int((selection.height * yScale).rounded())
+        )
+    }
+
+    private func setPresetButtonTitle(_ presetTitle: String?) {
+        let title = presetTitle ?? "预设…"
+        presetButton.attributedTitle = NSAttributedString(string: title, attributes: [
+            .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+            .foregroundColor: NSColor.white
+        ])
+        presetButton.toolTip = presetTitle.map { "当前尺寸预设：\($0)" } ?? "选择或管理常用截图尺寸"
+        presetButton.needsDisplay = true
     }
 
     @objc private func cancelCapture() { onCancel?() }
@@ -986,6 +1151,15 @@ final class RegionSelectionView: NSView {
         return moved
     }
 
+    private func fittedSelectionRect(_ requested: CGRect) -> CGRect {
+        var fitted = constrained(requested)
+        fitted.size.width = min(max(2, fitted.width), bounds.width)
+        fitted.size.height = min(max(2, fitted.height), bounds.height)
+        fitted.origin.x = min(max(fitted.minX, bounds.minX), bounds.maxX - fitted.width)
+        fitted.origin.y = min(max(fitted.minY, bounds.minY), bounds.maxY - fitted.height)
+        return fitted.integral
+    }
+
     private func resizedRect(_ rect: CGRect, from start: CGPoint, to point: CGPoint, handle: Handle) -> CGRect {
         var result = rect
         switch handle {
@@ -1090,7 +1264,8 @@ final class RegionSelectionView: NSView {
             width: targetWidth,
             height: targetHeight
         )
-        fixedSelection = constrained(requested.intersection(bounds))
+        setPresetButtonTitle(nil)
+        fixedSelection = fittedSelectionRect(requested)
         window?.makeFirstResponder(self)
         setDimensionFeedback(.success, resetAfter: 0.9)
         needsDisplay = true
@@ -1103,6 +1278,7 @@ extension RegionSelectionView: NSTextFieldDelegate {
     }
 
     func controlTextDidChange(_ notification: Notification) {
+        setPresetButtonTitle(nil)
         setDimensionFeedback(.editing)
     }
 }

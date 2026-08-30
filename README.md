@@ -13,6 +13,7 @@ Cutter is a native macOS screenshot tool focused on still images. The current mi
 - Registers a global `⌥⌘2` shortcut for capture, including when Cutter is not focused.
 - Shows an action bar next to the selection rectangle and keeps every editing tool visible.
 - Lets the user choose copy, save to `~/Pictures/Cutter`, or copy-and-save from that action bar.
+- Includes built-in `200×200`, `400×400`, `800×600`, and `1280×720` size presets, plus persistent custom presets saved from the current dimensions.
 - Pressing Enter confirms the selection with the remembered output action.
 - The action bar includes an explicit cancel button; `Esc` also cancels.
 - Includes pen, line, arrow, numeric-label, and letter-label annotation tools with a shared color palette.
