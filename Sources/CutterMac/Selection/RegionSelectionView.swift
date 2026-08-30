@@ -35,6 +35,11 @@ final class RegionSelectionView: NSView {
     private let dimensionSeparator = NSTextField(labelWithString: "×")
     private let dimensionLabel = NSTextField(labelWithString: "尺寸")
     private let pixelLabel = NSTextField(labelWithString: "px")
+    private let dimensionApplyButton = NSButton()
+    private var dimensionFeedbackState: DimensionFeedbackState = .idle
+    private var invalidWidth = false
+    private var invalidHeight = false
+    private var dimensionFeedbackReset: DispatchWorkItem?
     private var shapeButtons: [(shape: CaptureSettings.Shape, button: NSButton)] = []
     private var toolButtons: [(tool: AnnotationTool, button: NSButton)] = []
     private var colorButtons: [(color: AnnotationColor, button: NSButton)] = []
@@ -45,6 +50,10 @@ final class RegionSelectionView: NSView {
 
     private enum Handle {
         case topLeft, top, topRight, left, right, bottomLeft, bottom, bottomRight
+    }
+
+    private enum DimensionFeedbackState {
+        case idle, editing, success, error
     }
 
     private enum AnnotationTool { case none, pen, line, arrow, number, letter }
@@ -502,6 +511,13 @@ final class RegionSelectionView: NSView {
         cancelButton.toolTip = "取消截图（Esc）"
         addSubview(cancelButton)
 
+        configureTextButton(dimensionApplyButton, title: "应用", fontSize: 11)
+        dimensionApplyButton.target = self
+        dimensionApplyButton.action = #selector(applyDimensionsFromButton)
+        dimensionApplyButton.toolTip = "应用宽度和高度（Return）"
+        dimensionApplyButton.setAccessibilityLabel("应用尺寸")
+        addSubview(dimensionApplyButton)
+
         for label in [dimensionLabel, pixelLabel] {
             label.textColor = NSColor.white.withAlphaComponent(0.72)
             label.font = NSFont.systemFont(ofSize: 11, weight: .medium)
@@ -555,7 +571,7 @@ final class RegionSelectionView: NSView {
         views.append(contentsOf: toolButtons.map { $0.button })
         views.append(contentsOf: colorButtons.map { $0.button })
         views.append(contentsOf: outputButtons.map { $0.button })
-        views.append(contentsOf: [cancelButton, undoButton, redoButton, dimensionLabel, pixelLabel])
+        views.append(contentsOf: [cancelButton, undoButton, redoButton, dimensionApplyButton, dimensionLabel, pixelLabel])
         return views
     }
 
@@ -620,9 +636,10 @@ final class RegionSelectionView: NSView {
         let bottomY = toolbar.minY + 6
         dimensionLabel.frame = CGRect(x: innerX + 2, y: bottomY + 5, width: 30, height: 20)
         pixelLabel.frame = CGRect(x: innerX + 188, y: bottomY + 5, width: 20, height: 20)
+        dimensionApplyButton.frame = CGRect(x: innerX + 214, y: bottomY, width: 56, height: 30)
 
-        let actionX = innerX + 218
-        let actionWidth = max(0, innerWidth - 218)
+        let actionX = innerX + 278
+        let actionWidth = max(0, innerWidth - 278)
         let actionWeights: [CGFloat] = [0.20, 0.20, 0.36, 0.24]
         var nextActionX = actionX
         let actionButtons = outputButtons.map(\.button) + [cancelButton]
@@ -653,6 +670,7 @@ final class RegionSelectionView: NSView {
             button.alphaValue = button.isEnabled ? 1 : 0.38
             button.layer?.backgroundColor = NSColor.white.withAlphaComponent(button.isEnabled ? 0.08 : 0.03).cgColor
         }
+        updateDimensionFeedbackStyle()
     }
 
     private func style(_ button: NSButton, selected: Bool, prominent: Bool = false) {
@@ -663,10 +681,80 @@ final class RegionSelectionView: NSView {
         button.layer?.borderColor = NSColor.white.withAlphaComponent(0.08).cgColor
     }
 
+    private func updateDimensionFeedbackStyle() {
+        let accent: NSColor
+        let title: String
+        let accessibilityValue: String
+        switch dimensionFeedbackState {
+        case .idle:
+            accent = NSColor.white.withAlphaComponent(0.22)
+            title = "应用"
+            accessibilityValue = "尺寸未修改"
+        case .editing:
+            accent = NSColor.controlAccentColor
+            title = "应用"
+            accessibilityValue = "尺寸已修改，等待应用"
+        case .success:
+            accent = NSColor.systemGreen
+            title = "已应用"
+            accessibilityValue = "尺寸已应用"
+        case .error:
+            accent = NSColor.systemRed
+            title = "检查数值"
+            accessibilityValue = "尺寸输入无效"
+        }
+
+        for (field, invalid) in [(widthField, invalidWidth), (heightField, invalidHeight)] {
+            let fieldAccent = invalid
+                ? NSColor.systemRed
+                : (dimensionFeedbackState == .error ? NSColor.white.withAlphaComponent(0.22) : accent)
+            field.wantsLayer = true
+            field.layer?.cornerRadius = 6
+            field.layer?.borderWidth = dimensionFeedbackState == .idle ? 1 : 2
+            field.layer?.borderColor = fieldAccent.cgColor
+            field.needsDisplay = true
+        }
+
+        dimensionApplyButton.attributedTitle = NSAttributedString(string: title, attributes: [
+            .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+            .foregroundColor: NSColor.white
+        ])
+        dimensionApplyButton.isEnabled = dimensionFeedbackState != .idle
+        dimensionApplyButton.alphaValue = dimensionFeedbackState == .idle ? 0.52 : 1
+        dimensionApplyButton.layer?.backgroundColor = dimensionFeedbackState == .idle
+            ? NSColor.white.withAlphaComponent(0.05).cgColor
+            : accent.withAlphaComponent(dimensionFeedbackState == .editing ? 0.88 : 1).cgColor
+        dimensionApplyButton.layer?.borderWidth = dimensionFeedbackState == .idle ? 1 : 0
+        dimensionApplyButton.layer?.borderColor = NSColor.white.withAlphaComponent(0.08).cgColor
+        dimensionApplyButton.setAccessibilityValue(accessibilityValue)
+        dimensionApplyButton.needsDisplay = true
+    }
+
+    private func setDimensionFeedback(
+        _ state: DimensionFeedbackState,
+        invalidWidth: Bool = false,
+        invalidHeight: Bool = false,
+        resetAfter delay: TimeInterval? = nil
+    ) {
+        dimensionFeedbackReset?.cancel()
+        dimensionFeedbackState = state
+        self.invalidWidth = invalidWidth
+        self.invalidHeight = invalidHeight
+        updateDimensionFeedbackStyle()
+
+        guard let delay else { return }
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.setDimensionFeedback(.idle)
+        }
+        dimensionFeedbackReset = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
     @objc private func selectShape(_ sender: NSButton) {
         guard let candidate = shapeButtons.first(where: { $0.button === sender })?.shape else { return }
         shape = candidate
         if let selection = fixedSelection { fixedSelection = constrained(selection) }
+        setDimensionFeedback(.idle)
         updateToolbarControlStyles()
         needsDisplay = true
     }
@@ -694,6 +782,7 @@ final class RegionSelectionView: NSView {
     @objc private func cancelCapture() { onCancel?() }
     @objc private func undoFromToolbar() { undoAnnotationChange() }
     @objc private func redoFromToolbar() { redoAnnotationChange() }
+    @objc private func applyDimensionsFromButton() { commitDimensionFields() }
 
     private func drawAnnotations() {
         for (index, annotation) in annotations.enumerated() {
@@ -973,15 +1062,23 @@ final class RegionSelectionView: NSView {
     }
 
     @objc private func commitDimensionFields() {
+        let parsedWidth = Double(widthField.stringValue)
+        let parsedHeight = Double(heightField.stringValue)
+        let widthIsValid = parsedWidth.map { $0 >= 2 } ?? false
+        let heightIsValid = shape != .rectangle || (parsedHeight.map { $0 >= 2 } ?? false)
         guard let selection = selectionRect,
-              let width = Double(widthField.stringValue),
-              let height = Double(heightField.stringValue),
-              width >= 2,
-              height >= 2 else {
+              let width = parsedWidth,
+              widthIsValid,
+              heightIsValid else {
             NSSound.beep()
-            layoutDimensionFields()
+            setDimensionFeedback(
+                .error,
+                invalidWidth: !widthIsValid,
+                invalidHeight: !heightIsValid
+            )
             return
         }
+        let height = parsedHeight ?? width
         let xScale = CGFloat(capture.image.width) / bounds.width
         let yScale = CGFloat(capture.image.height) / bounds.height
         let targetWidth = CGFloat(width) / xScale
@@ -995,8 +1092,17 @@ final class RegionSelectionView: NSView {
         )
         fixedSelection = constrained(requested.intersection(bounds))
         window?.makeFirstResponder(self)
+        setDimensionFeedback(.success, resetAfter: 0.9)
         needsDisplay = true
     }
 }
 
-extension RegionSelectionView: NSTextFieldDelegate {}
+extension RegionSelectionView: NSTextFieldDelegate {
+    func controlTextDidBeginEditing(_ notification: Notification) {
+        setDimensionFeedback(.editing)
+    }
+
+    func controlTextDidChange(_ notification: Notification) {
+        setDimensionFeedback(.editing)
+    }
+}
