@@ -24,6 +24,7 @@ final class RegionSelectionView: NSView {
     private var movingAnnotationDidChange = false
     private var annotationStart: CGPoint?
     private var annotationCurrent: CGPoint?
+    private var activePrivacySeed: UInt64?
     private var fixedSelection: CGRect?
     private var movingFrom: (
         rect: CGRect,
@@ -111,8 +112,23 @@ final class RegionSelectionView: NSView {
         let text: String?
         let color: AnnotationColor
         let points: [CGPoint]
-        init(tool: AnnotationTool, start: CGPoint, end: CGPoint, text: String?, color: AnnotationColor, points: [CGPoint] = []) {
-            self.tool = tool; self.start = start; self.end = end; self.text = text; self.color = color; self.points = points
+        let privacySeed: UInt64?
+        init(
+            tool: AnnotationTool,
+            start: CGPoint,
+            end: CGPoint,
+            text: String?,
+            color: AnnotationColor,
+            points: [CGPoint] = [],
+            privacySeed: UInt64? = nil
+        ) {
+            self.tool = tool
+            self.start = start
+            self.end = end
+            self.text = text
+            self.color = color
+            self.points = points
+            self.privacySeed = privacySeed
         }
     }
     private var penPoints: [CGPoint] = []
@@ -268,6 +284,7 @@ final class RegionSelectionView: NSView {
             annotationStart = point
             annotationCurrent = point
             penPoints = [point]
+            activePrivacySeed = (activeTool == .mosaic || activeTool == .blur) ? randomPrivacySeed() : nil
             needsDisplay = true
             return
         }
@@ -310,7 +327,8 @@ final class RegionSelectionView: NSView {
                 end: original.end.applying(CGAffineTransform(translationX: dx, y: dy)),
                 text: original.text,
                 color: original.color,
-                points: original.points.map { $0.applying(CGAffineTransform(translationX: dx, y: dy)) }
+                points: original.points.map { $0.applying(CGAffineTransform(translationX: dx, y: dy)) },
+                privacySeed: original.privacySeed
             )
             needsDisplay = true
             return
@@ -365,10 +383,19 @@ final class RegionSelectionView: NSView {
         }
         if let start = annotationStart, let end = annotationCurrent {
             registerAnnotationChange()
-            annotations.append(Annotation(tool: activeTool, start: start, end: end, text: nil, color: activeColor, points: penPoints))
+            annotations.append(Annotation(
+                tool: activeTool,
+                start: start,
+                end: end,
+                text: nil,
+                color: activeColor,
+                points: penPoints,
+                privacySeed: activePrivacySeed
+            ))
             annotationStart = nil
             annotationCurrent = nil
             penPoints = []
+            activePrivacySeed = nil
             needsDisplay = true
             return
         }
@@ -498,7 +525,7 @@ final class RegionSelectionView: NSView {
             context.setFillColor(annotation.color.color.cgColor)
             context.setLineWidth(max(2, 2 * xScale))
             if annotation.tool == .mosaic || annotation.tool == .blur {
-                applyPrivacyEffect(annotation, in: context, rect: CGRect(x: min(start.x, end.x), y: min(start.y, end.y), width: abs(end.x - start.x), height: abs(end.y - start.y)), scale: xScale)
+                applyPrivacyEffect(annotation, in: context, rect: CGRect(x: min(start.x, end.x), y: min(start.y, end.y), width: abs(end.x - start.x), height: abs(end.y - start.y)))
             } else if annotation.tool == .rectangle {
                 context.stroke(CGRect(x: min(start.x, end.x), y: min(start.y, end.y), width: abs(end.x - start.x), height: abs(end.y - start.y)))
             } else if annotation.tool == .highlight {
@@ -565,25 +592,80 @@ final class RegionSelectionView: NSView {
         return context.makeImage()
     }
 
-    private func applyPrivacyEffect(_ annotation: Annotation, in context: CGContext, rect: CGRect, scale: CGFloat) {
+    private func applyPrivacyEffect(_ annotation: Annotation, in context: CGContext, rect: CGRect) {
         let effectRect = rect.integral.intersection(CGRect(x: 0, y: 0, width: context.width, height: context.height))
         guard !effectRect.isNull, effectRect.width >= 2, effectRect.height >= 2,
-              let currentImage = context.makeImage() else { return }
-        let input = CIImage(cgImage: currentImage)
-        let filtered: CIImage
-        if annotation.tool == .mosaic {
-            filtered = input.applyingFilter("CIPixellate", parameters: [
-                kCIInputScaleKey: max(8, 10 * scale),
-                kCIInputCenterKey: CIVector(x: effectRect.midX, y: effectRect.midY)
-            ])
-        } else {
-            filtered = input
-                .clampedToExtent()
-                .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: max(6, 8 * scale)])
-                .cropped(to: input.extent)
-        }
-        guard let image = coreImageContext.createCGImage(filtered.cropped(to: effectRect), from: effectRect) else { return }
+              let image = randomPrivacyImage(
+                  width: Int(effectRect.width.rounded()),
+                  height: Int(effectRect.height.rounded()),
+                  tool: annotation.tool,
+                  seed: annotation.privacySeed ?? 0
+              ) else { return }
         context.draw(image, in: effectRect)
+    }
+
+    private struct PrivacyRandom {
+        var state: UInt64
+
+        mutating func nextUnit() -> CGFloat {
+            state &+= 0x9E3779B97F4A7C15
+            var value = state
+            value = (value ^ (value >> 30)) &* 0xBF58476D1CE4E5B9
+            value = (value ^ (value >> 27)) &* 0x94D049BB133111EB
+            value ^= value >> 31
+            return CGFloat(value >> 11) / CGFloat(1 << 53)
+        }
+    }
+
+    private func randomPrivacySeed() -> UInt64 {
+        var generator = SystemRandomNumberGenerator()
+        return generator.next()
+    }
+
+    private func randomPrivacyImage(
+        width: Int,
+        height: Int,
+        tool: AnnotationTool,
+        seed: UInt64
+    ) -> CGImage? {
+        guard width > 1, height > 1 else { return nil }
+        let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )
+        guard let context else { return nil }
+
+        var random = PrivacyRandom(state: seed == 0 ? 0xC0FFEE : seed)
+        let blockSize = tool == .mosaic
+            ? max(6, min(18, min(width, height) / 10))
+            : max(14, min(32, min(width, height) / 6))
+        for y in stride(from: 0, to: height, by: blockSize) {
+            for x in stride(from: 0, to: width, by: blockSize) {
+                let red = 0.18 + random.nextUnit() * 0.64
+                let green = 0.18 + random.nextUnit() * 0.64
+                let blue = 0.18 + random.nextUnit() * 0.64
+                context.setFillColor(red: red, green: green, blue: blue, alpha: 1)
+                context.fill(CGRect(
+                    x: x,
+                    y: y,
+                    width: min(blockSize, width - x),
+                    height: min(blockSize, height - y)
+                ))
+            }
+        }
+        guard let image = context.makeImage() else { return nil }
+        guard tool == .blur else { return image }
+        let input = CIImage(cgImage: image)
+        let blurred = input
+            .clampedToExtent()
+            .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 10])
+            .cropped(to: input.extent)
+        return coreImageContext.createCGImage(blurred, from: input.extent)
     }
 
     private func drawStampPerforations(in selection: CGRect) {
@@ -1408,7 +1490,14 @@ final class RegionSelectionView: NSView {
             if activeTool == .rectangle {
                 path.appendRect(CGRect(x: min(start.x, end.x), y: min(start.y, end.y), width: abs(end.x - start.x), height: abs(end.y - start.y)))
             } else if activeTool == .mosaic || activeTool == .blur {
-                let previewAnnotation = Annotation(tool: activeTool, start: start, end: end, text: nil, color: activeColor)
+                let previewAnnotation = Annotation(
+                    tool: activeTool,
+                    start: start,
+                    end: end,
+                    text: nil,
+                    color: activeColor,
+                    privacySeed: activePrivacySeed
+                )
                 let rect = annotationRect(for: previewAnnotation)
                 if let image = previewPrivacyEffect(for: previewAnnotation, rect: rect) {
                     NSImage(cgImage: image, size: rect.size).draw(in: rect)
@@ -1449,20 +1538,12 @@ final class RegionSelectionView: NSView {
             height: rect.height * yScale
         ).integral
         guard pixelRect.width >= 2, pixelRect.height >= 2 else { return nil }
-        let input = CIImage(cgImage: capture.image)
-        let filtered: CIImage
-        if annotation.tool == .mosaic {
-            filtered = input.applyingFilter("CIPixellate", parameters: [
-                kCIInputScaleKey: max(8, 10 * min(xScale, yScale)),
-                kCIInputCenterKey: CIVector(x: pixelRect.midX, y: pixelRect.midY)
-            ])
-        } else {
-            filtered = input
-                .clampedToExtent()
-                .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: max(6, 8 * min(xScale, yScale))])
-                .cropped(to: input.extent)
-        }
-        return coreImageContext.createCGImage(filtered.cropped(to: pixelRect), from: pixelRect)
+        return randomPrivacyImage(
+            width: Int(pixelRect.width.rounded()),
+            height: Int(pixelRect.height.rounded()),
+            tool: annotation.tool,
+            seed: annotation.privacySeed ?? 0
+        )
     }
 
     private func drawArrowHead(from start: CGPoint, to end: CGPoint) {
@@ -1543,7 +1624,8 @@ final class RegionSelectionView: NSView {
             end: annotation.end.applying(transform),
             text: annotation.text,
             color: annotation.color,
-            points: annotation.points.map { $0.applying(transform) }
+            points: annotation.points.map { $0.applying(transform) },
+            privacySeed: annotation.privacySeed
         )
     }
 
