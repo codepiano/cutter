@@ -6,8 +6,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let shortcutService = GlobalShortcutService()
     private var statusItem: NSStatusItem?
     private var selectionController: RegionSelectionController?
+    private var countdownController: CaptureCountdownController?
+    private var captureTask: Task<Void, Never>?
     private var captureSettings = CaptureSettings.current
     private var includeCursorItem: NSMenuItem?
+    private var captureItem: NSMenuItem?
+    private var delayItems: [Int: NSMenuItem] = [:]
     private var isCapturing = false
 
     override init() {
@@ -28,6 +32,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        captureTask?.cancel()
+        countdownController?.cancel()
         shortcutService.unregister()
     }
 
@@ -46,6 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             keyEquivalent: ""
         )
         captureItem.target = self
+        self.captureItem = captureItem
 
         let modeMenu = NSMenu()
         let regionItem = modeMenu.addItem(withTitle: "区域截图", action: nil, keyEquivalent: "")
@@ -56,6 +63,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         fullScreenItem.isEnabled = false
         let modeItem = menu.addItem(withTitle: "截图方式", action: nil, keyEquivalent: "")
         modeItem.submenu = modeMenu
+
+        let delayMenu = NSMenu()
+        for delay in CaptureSettings.Delay.allCases {
+            let delayItem = delayMenu.addItem(
+                withTitle: delay.title,
+                action: #selector(selectCaptureDelay(_:)),
+                keyEquivalent: ""
+            )
+            delayItem.target = self
+            delayItem.tag = delay.rawValue
+            delayItem.state = delay == captureSettings.delay ? .on : .off
+            delayItems[delay.rawValue] = delayItem
+        }
+        let delayItem = menu.addItem(withTitle: "截图延时", action: nil, keyEquivalent: "")
+        delayItem.submenu = delayMenu
 
         let cursorItem = menu.addItem(
             withTitle: "包含鼠标指针",
@@ -91,48 +113,114 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         captureSettings.persist()
     }
 
+    @objc private func selectCaptureDelay(_ sender: NSMenuItem) {
+        guard let delay = CaptureSettings.Delay(rawValue: sender.tag) else { return }
+        captureSettings.delay = delay
+        captureSettings.persist()
+        for (seconds, item) in delayItems {
+            item.state = seconds == delay.rawValue ? .on : .off
+        }
+    }
+
     @objc private func capturePrimaryDisplay() {
+        if countdownController != nil {
+            cancelDelayedCapture()
+            return
+        }
         guard !isCapturing else { return }
         isCapturing = true
 
-        Task { @MainActor in
-            defer { isCapturing = false }
+        captureTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.finishCaptureTask() }
             do {
-                let capture = try await captureBackend.capturePrimaryDisplay(
-                    includeCursor: captureSettings.includeCursor
-                )
-                let controller = RegionSelectionController()
-                selectionController = controller
-                guard let result = await controller.selectRegion(
-                    from: capture,
-                    defaultOutput: captureSettings.output
-                ) else {
-                    selectionController = nil
-                    return
+                if self.captureSettings.delay.rawValue > 0 {
+                    let countdown = CaptureCountdownController()
+                    self.countdownController = countdown
+                    self.captureItem?.title = "取消延时截图    ⌥⌘2"
+                    try await countdown.run(seconds: self.captureSettings.delay.rawValue) { [weak self] remaining in
+                        self?.showCountdownStatus(remaining: remaining)
+                    }
+                    self.countdownController = nil
+                    self.restoreIdleStatus()
+                    try await Task.sleep(nanoseconds: 120_000_000)
                 }
-                selectionController = nil
-                captureSettings.output = result.output
-                captureSettings.persist()
-                switch result.output {
-                case .copy:
-                    try ImageClipboard.copy(result.image, scaleFactor: capture.scaleFactor)
-                case .save:
-                    _ = try ImageFileWriter.savePNG(
-                        result.image,
-                        to: captureSettings.downloadDirectory
-                    )
-                case .copyAndSave:
-                    try ImageClipboard.copy(result.image, scaleFactor: capture.scaleFactor)
-                    _ = try ImageFileWriter.savePNG(
-                        result.image,
-                        to: captureSettings.downloadDirectory
-                    )
-                }
-                showStatusFeedback(for: result.output)
+                try Task.checkCancellation()
+                try await self.performRegionCapture()
+            } catch is CancellationError {
+                self.restoreIdleStatus()
             } catch {
-                present(error: error)
+                self.present(error: error)
             }
         }
+    }
+
+    private func performRegionCapture() async throws {
+        let capture = try await captureBackend.capturePrimaryDisplay(
+            includeCursor: captureSettings.includeCursor
+        )
+        let controller = RegionSelectionController()
+        selectionController = controller
+        guard let result = await controller.selectRegion(
+            from: capture,
+            defaultOutput: captureSettings.output
+        ) else {
+            selectionController = nil
+            return
+        }
+        selectionController = nil
+        captureSettings.output = result.output
+        captureSettings.persist()
+        switch result.output {
+        case .copy:
+            try ImageClipboard.copy(result.image, scaleFactor: capture.scaleFactor)
+        case .save:
+            _ = try ImageFileWriter.savePNG(
+                result.image,
+                to: captureSettings.downloadDirectory
+            )
+        case .copyAndSave:
+            try ImageClipboard.copy(result.image, scaleFactor: capture.scaleFactor)
+            _ = try ImageFileWriter.savePNG(
+                result.image,
+                to: captureSettings.downloadDirectory
+            )
+        }
+        showStatusFeedback(for: result.output)
+    }
+
+    private func cancelDelayedCapture() {
+        captureTask?.cancel()
+        countdownController?.cancel()
+        countdownController = nil
+        restoreIdleStatus()
+    }
+
+    private func finishCaptureTask() {
+        countdownController?.cancel()
+        countdownController = nil
+        captureTask = nil
+        isCapturing = false
+        captureItem?.title = "开始截图    ⌥⌘2"
+    }
+
+    private func showCountdownStatus(remaining: Int) {
+        guard remaining > 0 else { return }
+        let description = "截图将在 \(remaining) 秒后开始"
+        statusItem?.button?.image = NSImage(
+            systemSymbolName: "timer",
+            accessibilityDescription: description
+        )
+        statusItem?.button?.toolTip = "\(description)；再次按 ⌥⌘2 取消"
+    }
+
+    private func restoreIdleStatus() {
+        statusItem?.button?.image = NSImage(
+            systemSymbolName: "viewfinder",
+            accessibilityDescription: "Cutter"
+        )
+        statusItem?.button?.toolTip = "Cutter（快捷键：⌥⌘2）"
+        captureItem?.title = "开始截图    ⌥⌘2"
     }
 
     @objc private func checkPermission() {

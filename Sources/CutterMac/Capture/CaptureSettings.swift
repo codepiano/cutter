@@ -18,9 +18,26 @@ struct CaptureSettings {
         case copyAndSave
     }
 
+    enum Delay: Int, CaseIterable {
+        case immediate = 0
+        case threeSeconds = 3
+        case fiveSeconds = 5
+        case tenSeconds = 10
+
+        var title: String {
+            switch self {
+            case .immediate: "立即"
+            case .threeSeconds: "3 秒"
+            case .fiveSeconds: "5 秒"
+            case .tenSeconds: "10 秒"
+            }
+        }
+    }
+
     var includeCursor: Bool
     var output: Output
     var downloadDirectory: URL
+    var delay: Delay
 
     static var current: CaptureSettings {
         let defaults = UserDefaults.standard
@@ -37,7 +54,8 @@ struct CaptureSettings {
         return CaptureSettings(
             includeCursor: defaults.bool(forKey: Keys.includeCursor),
             output: output,
-            downloadDirectory: configuredDirectory
+            downloadDirectory: configuredDirectory,
+            delay: Delay(rawValue: defaults.integer(forKey: Keys.delaySeconds)) ?? .immediate
         )
     }
 
@@ -46,11 +64,13 @@ struct CaptureSettings {
         defaults.set(includeCursor, forKey: Keys.includeCursor)
         defaults.set(output.rawValue, forKey: Keys.output)
         defaults.set(downloadDirectory.path, forKey: Keys.downloadDirectory)
+        defaults.set(delay.rawValue, forKey: Keys.delaySeconds)
     }
 
     private enum Keys {
         static let includeCursor = "capture.includeCursor"
         static let output = "capture.output"
         static let downloadDirectory = "capture.downloadDirectory"
+        static let delaySeconds = "capture.delaySeconds"
     }
 }

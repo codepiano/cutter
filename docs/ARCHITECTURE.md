@@ -32,6 +32,7 @@ ImageClipboard               ImageFileWriter
 
 - 创建菜单栏图标和菜单。
 - 注册 `⌥⌘2` 全局快捷键。
+- 调度立即或延时截图；倒计时期间再次触发快捷键会取消任务。
 - 串联捕获、选区和输出流程。
 - 持久化上次使用的输出动作。
 - 根据复制、存储或复制并存储显示准确的完成反馈。
@@ -41,6 +42,7 @@ ImageClipboard               ImageFileWriter
 - `ScreenCaptureBackend`：屏幕捕获抽象。
 - `ScreenCaptureKitBackend`：当前 macOS 实现，冻结主显示器图像并保留缩放信息。
 - `CaptureSettings`：鼠标指针、默认输出和存储目录。
+- `CaptureCountdownController`：位于主显示器中央的非激活倒计时 HUD；捕获前和取消后负责隐藏窗口。
 - `CaptureSizePreset` / `CaptureSizePresetStore`：内置尺寸、自定义尺寸校验、去重和 `UserDefaults` 持久化。
 - `ImageFileWriter`：PNG 本机输出。
 
@@ -104,6 +106,7 @@ AppKit 选区点数
 - `capture.output`
 - `capture.downloadDirectory`
 - `capture.customSizePresets`
+- `capture.delaySeconds`
 
 这些设置只描述本机截图行为，不包含截图图像本身。
 
