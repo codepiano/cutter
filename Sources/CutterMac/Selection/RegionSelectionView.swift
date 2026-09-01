@@ -1,4 +1,5 @@
 import AppKit
+import CoreImage
 import CoreGraphics
 
 @MainActor
@@ -39,6 +40,9 @@ final class RegionSelectionView: NSView {
     private var selectedWindowID: CGWindowID?
     private var isCompleting = false
     private var pointerTrackingArea: NSTrackingArea?
+    private let textAnnotationField = NSTextField()
+    private var pendingTextPoint: CGPoint?
+    private let coreImageContext = CIContext()
     private let widthField = NSTextField()
     private let heightField = NSTextField()
     private let dimensionSeparator = NSTextField(labelWithString: "×")
@@ -70,7 +74,9 @@ final class RegionSelectionView: NSView {
         case idle, editing, success, error
     }
 
-    private enum AnnotationTool { case none, pen, line, arrow, number, letter }
+    private enum AnnotationTool {
+        case none, pen, line, arrow, number, letter, rectangle, text, highlight, mosaic, blur
+    }
     private struct AnnotationColor: Equatable {
         static let red = AnnotationColor(color: .systemRed, name: "红色")
         static let orange = AnnotationColor(color: .systemOrange, name: "橙色")
@@ -127,6 +133,7 @@ final class RegionSelectionView: NSView {
         super.init(frame: frameRect)
         windowSelectionEnabled = !captureWindows.isEmpty
         configureDimensionFields()
+        configureTextAnnotationField()
         configureToolbarControls()
     }
 
@@ -244,6 +251,10 @@ final class RegionSelectionView: NSView {
             needsDisplay = true
             return
         }
+        if activeTool == .text, selectionRect?.contains(point) == true {
+            beginTextAnnotation(at: point)
+            return
+        }
         if activeTool == .number || activeTool == .letter, selectionRect?.contains(point) == true {
             let index = annotations.filter { $0.tool == activeTool }.count + 1
             let text = activeTool == .number ? "\(index)" : alphabeticLabel(for: index)
@@ -252,7 +263,8 @@ final class RegionSelectionView: NSView {
             needsDisplay = true
             return
         }
-        if activeTool == .pen || activeTool == .line || activeTool == .arrow, selectionRect?.contains(point) == true {
+        if [.pen, .line, .arrow, .rectangle, .highlight, .mosaic, .blur].contains(activeTool),
+           selectionRect?.contains(point) == true {
             annotationStart = point
             annotationCurrent = point
             penPoints = [point]
@@ -410,7 +422,10 @@ final class RegionSelectionView: NSView {
         } else if event.keyCode == 51 || event.keyCode == 117 {
             deleteSelectedAnnotation()
         } else if modifiers.isEmpty, let key = event.charactersIgnoringModifiers?.lowercased() {
-            let shortcuts: [String: AnnotationTool] = ["v": .none, "p": .pen, "l": .line, "a": .arrow, "n": .number, "t": .letter]
+            let shortcuts: [String: AnnotationTool] = [
+                "v": .none, "p": .pen, "l": .line, "a": .arrow, "n": .number, "t": .letter,
+                "r": .rectangle, "x": .text, "h": .highlight, "m": .mosaic, "b": .blur
+            ]
             if let tool = shortcuts[key] {
                 activeTool = tool
                 selectedAnnotationIndex = nil
@@ -482,7 +497,29 @@ final class RegionSelectionView: NSView {
             context.setStrokeColor(annotation.color.color.cgColor)
             context.setFillColor(annotation.color.color.cgColor)
             context.setLineWidth(max(2, 2 * xScale))
-            if annotation.tool == .pen {
+            if annotation.tool == .mosaic || annotation.tool == .blur {
+                applyPrivacyEffect(annotation, in: context, rect: CGRect(x: min(start.x, end.x), y: min(start.y, end.y), width: abs(end.x - start.x), height: abs(end.y - start.y)), scale: xScale)
+            } else if annotation.tool == .rectangle {
+                context.stroke(CGRect(x: min(start.x, end.x), y: min(start.y, end.y), width: abs(end.x - start.x), height: abs(end.y - start.y)))
+            } else if annotation.tool == .highlight {
+                context.saveGState()
+                context.setAlpha(0.32)
+                context.setLineWidth(max(10, 14 * xScale))
+                context.setLineCap(.round)
+                context.move(to: start)
+                context.addLine(to: end)
+                context.strokePath()
+                context.restoreGState()
+            } else if annotation.tool == .text, let text = annotation.text {
+                let attributes: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 18 * xScale, weight: .semibold),
+                    .foregroundColor: annotation.color.color
+                ]
+                NSGraphicsContext.saveGraphicsState()
+                NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+                NSAttributedString(string: text, attributes: attributes).draw(at: start)
+                NSGraphicsContext.restoreGraphicsState()
+            } else if annotation.tool == .pen {
                 if let first = annotation.points.first {
                     context.move(to: point(first))
                     for sample in annotation.points.dropFirst() { context.addLine(to: point(sample)) }
@@ -526,6 +563,27 @@ final class RegionSelectionView: NSView {
             context.restoreGState()
         }
         return context.makeImage()
+    }
+
+    private func applyPrivacyEffect(_ annotation: Annotation, in context: CGContext, rect: CGRect, scale: CGFloat) {
+        let effectRect = rect.integral.intersection(CGRect(x: 0, y: 0, width: context.width, height: context.height))
+        guard !effectRect.isNull, effectRect.width >= 2, effectRect.height >= 2,
+              let currentImage = context.makeImage() else { return }
+        let input = CIImage(cgImage: currentImage)
+        let filtered: CIImage
+        if annotation.tool == .mosaic {
+            filtered = input.applyingFilter("CIPixellate", parameters: [
+                kCIInputScaleKey: max(8, 10 * scale),
+                kCIInputCenterKey: CIVector(x: effectRect.midX, y: effectRect.midY)
+            ])
+        } else {
+            filtered = input
+                .clampedToExtent()
+                .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: max(6, 8 * scale)])
+                .cropped(to: input.extent)
+        }
+        guard let image = coreImageContext.createCGImage(filtered.cropped(to: effectRect), from: effectRect) else { return }
+        context.draw(image, in: effectRect)
     }
 
     private func drawStampPerforations(in selection: CGRect) {
@@ -679,7 +737,7 @@ final class RegionSelectionView: NSView {
     private func toolbarRect(for selection: CGRect) -> CGRect {
         let inset: CGFloat = 8
         let gap: CGFloat = 8
-        let width = max(0, min(720, bounds.width - inset * 2))
+        let width = max(0, min(980, bounds.width - inset * 2))
         let height = max(0, min(84, bounds.height - inset * 2))
         let safeBounds = bounds.insetBy(dx: inset, dy: inset)
         let candidates = [
@@ -723,7 +781,9 @@ final class RegionSelectionView: NSView {
 
         let tools: [(AnnotationTool, String, String)] = [
             (.none, "选择", "V"), (.pen, "画笔", "P"), (.line, "直线", "L"),
-            (.arrow, "箭头", "A"), (.number, "数字", "N"), (.letter, "字母", "T")
+            (.arrow, "箭头", "A"), (.number, "数字", "N"), (.letter, "字母", "T"),
+            (.rectangle, "矩形框", "R"), (.text, "文本", "X"), (.highlight, "高亮", "H"),
+            (.mosaic, "马赛克", "M"), (.blur, "模糊", "B")
         ]
         for (tool, title, shortcut) in tools {
             let button = makeToolbarButton(title: title, fontSize: 11)
@@ -814,6 +874,22 @@ final class RegionSelectionView: NSView {
         if let originalColorPanelShowsAlpha { panel.showsAlpha = originalColorPanelShowsAlpha }
         originalColorPanelLevel = nil
         originalColorPanelShowsAlpha = nil
+    }
+
+    private func configureTextAnnotationField() {
+        textAnnotationField.font = NSFont.systemFont(ofSize: 18, weight: .semibold)
+        textAnnotationField.textColor = activeColor.color
+        textAnnotationField.backgroundColor = NSColor.black.withAlphaComponent(0.78)
+        textAnnotationField.drawsBackground = true
+        textAnnotationField.isBezeled = true
+        textAnnotationField.bezelStyle = .roundedBezel
+        textAnnotationField.focusRingType = .default
+        textAnnotationField.target = self
+        textAnnotationField.action = #selector(commitTextAnnotation)
+        textAnnotationField.delegate = self
+        textAnnotationField.isHidden = true
+        textAnnotationField.setAccessibilityLabel("标注文本")
+        addSubview(textAnnotationField)
     }
 
     private func makeToolbarButton(title: String, fontSize: CGFloat) -> NSButton {
@@ -1064,6 +1140,7 @@ final class RegionSelectionView: NSView {
 
     @objc private func selectTool(_ sender: NSButton) {
         guard let tool = toolButtons.first(where: { $0.button === sender })?.tool else { return }
+        if !textAnnotationField.isHidden { commitTextAnnotation() }
         activeTool = tool
         selectedAnnotationIndex = nil
         updateToolbarControlStyles()
@@ -1073,14 +1150,60 @@ final class RegionSelectionView: NSView {
     @objc private func selectColor(_ sender: NSButton) {
         guard let color = colorButtons.first(where: { $0.button === sender })?.color else { return }
         activeColor = color
+        textAnnotationField.textColor = activeColor.color
         updateToolbarControlStyles()
         needsDisplay = true
     }
 
     @objc private func selectCustomColor(_ sender: NSColorWell) {
         activeColor = AnnotationColor(color: sender.color, name: "自定义颜色")
+        textAnnotationField.textColor = activeColor.color
         updateToolbarControlStyles()
         needsDisplay = true
+    }
+
+    private func beginTextAnnotation(at point: CGPoint) {
+        guard let selection = selectionRect else { return }
+        let width = min(260, max(120, selection.maxX - point.x))
+        let origin = CGPoint(
+            x: min(max(point.x, selection.minX), selection.maxX - width),
+            y: min(max(point.y - 14, selection.minY), selection.maxY - 30)
+        )
+        pendingTextPoint = origin
+        textAnnotationField.frame = CGRect(x: origin.x, y: origin.y, width: width, height: 30)
+        textAnnotationField.stringValue = ""
+        textAnnotationField.textColor = activeColor.color
+        textAnnotationField.isHidden = false
+        window?.makeFirstResponder(textAnnotationField)
+    }
+
+    @objc private func commitTextAnnotation() {
+        guard !textAnnotationField.isHidden, let start = pendingTextPoint else { return }
+        let text = textAnnotationField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.isEmpty {
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 18, weight: .semibold),
+                .foregroundColor: activeColor.color
+            ]
+            let size = NSAttributedString(string: text, attributes: attributes).size()
+            registerAnnotationChange()
+            annotations.append(Annotation(
+                tool: .text,
+                start: start,
+                end: CGPoint(x: start.x + size.width, y: start.y + size.height),
+                text: text,
+                color: activeColor
+            ))
+        }
+        cancelTextAnnotation()
+        needsDisplay = true
+    }
+
+    private func cancelTextAnnotation() {
+        textAnnotationField.isHidden = true
+        textAnnotationField.stringValue = ""
+        pendingTextPoint = nil
+        window?.makeFirstResponder(self)
     }
 
     @objc private func performOutput(_ sender: NSButton) {
@@ -1241,7 +1364,28 @@ final class RegionSelectionView: NSView {
         for (index, annotation) in annotations.enumerated() {
             annotation.color.color.setStroke(); annotation.color.color.setFill()
             let path = NSBezierPath(); path.lineWidth = 2
-            if annotation.tool == .pen {
+            let rect = annotationRect(for: annotation)
+            if annotation.tool == .mosaic || annotation.tool == .blur {
+                if let image = previewPrivacyEffect(for: annotation, rect: rect) {
+                    NSImage(cgImage: image, size: rect.size).draw(in: rect)
+                }
+            } else if annotation.tool == .rectangle {
+                path.appendRect(rect)
+                path.stroke()
+            } else if annotation.tool == .highlight {
+                annotation.color.color.withAlphaComponent(0.32).setStroke()
+                path.lineWidth = 14
+                path.lineCapStyle = .round
+                path.move(to: annotation.start)
+                path.line(to: annotation.end)
+                path.stroke()
+            } else if annotation.tool == .text, let text = annotation.text {
+                let title = NSAttributedString(string: text, attributes: [
+                    .font: NSFont.systemFont(ofSize: 18, weight: .semibold),
+                    .foregroundColor: annotation.color.color
+                ])
+                title.draw(at: annotation.start)
+            } else if annotation.tool == .pen {
                 if let first = annotation.points.first {
                     path.move(to: first)
                     for point in annotation.points.dropFirst() { path.line(to: point) }
@@ -1250,7 +1394,7 @@ final class RegionSelectionView: NSView {
             } else if annotation.tool == .line || annotation.tool == .arrow {
                 path.move(to: annotation.start); path.line(to: annotation.end); path.stroke()
                 if annotation.tool == .arrow { drawArrowHead(from: annotation.start, to: annotation.end) }
-            } else if let text = annotation.text {
+            } else if (annotation.tool == .number || annotation.tool == .letter), let text = annotation.text {
                 let rect = CGRect(x: annotation.start.x - 14, y: annotation.start.y - 14, width: 28, height: 28)
                 NSBezierPath(ovalIn: rect).fill()
                 let title = NSAttributedString(string: text, attributes: [.font: NSFont.boldSystemFont(ofSize: 13), .foregroundColor: NSColor.white])
@@ -1261,7 +1405,21 @@ final class RegionSelectionView: NSView {
         }
         if let start = annotationStart, let end = annotationCurrent {
             activeColor.color.setStroke(); let path = NSBezierPath(); path.lineWidth = 2
-            if activeTool == .pen, let first = penPoints.first {
+            if activeTool == .rectangle {
+                path.appendRect(CGRect(x: min(start.x, end.x), y: min(start.y, end.y), width: abs(end.x - start.x), height: abs(end.y - start.y)))
+            } else if activeTool == .mosaic || activeTool == .blur {
+                let previewAnnotation = Annotation(tool: activeTool, start: start, end: end, text: nil, color: activeColor)
+                let rect = annotationRect(for: previewAnnotation)
+                if let image = previewPrivacyEffect(for: previewAnnotation, rect: rect) {
+                    NSImage(cgImage: image, size: rect.size).draw(in: rect)
+                }
+                path.appendRect(rect)
+            } else if activeTool == .highlight {
+                activeColor.color.withAlphaComponent(0.32).setStroke()
+                path.lineWidth = 14
+                path.lineCapStyle = .round
+                path.move(to: start); path.line(to: end)
+            } else if activeTool == .pen, let first = penPoints.first {
                 path.move(to: first)
                 for point in penPoints.dropFirst() { path.line(to: point) }
             } else {
@@ -1270,6 +1428,41 @@ final class RegionSelectionView: NSView {
             path.stroke()
             if activeTool == .arrow { drawArrowHead(from: start, to: end) }
         }
+    }
+
+    private func annotationRect(for annotation: Annotation) -> CGRect {
+        CGRect(
+            x: min(annotation.start.x, annotation.end.x),
+            y: min(annotation.start.y, annotation.end.y),
+            width: abs(annotation.end.x - annotation.start.x),
+            height: abs(annotation.end.y - annotation.start.y)
+        )
+    }
+
+    private func previewPrivacyEffect(for annotation: Annotation, rect: CGRect) -> CGImage? {
+        let xScale = CGFloat(capture.image.width) / bounds.width
+        let yScale = CGFloat(capture.image.height) / bounds.height
+        let pixelRect = CGRect(
+            x: rect.minX * xScale,
+            y: (bounds.height - rect.maxY) * yScale,
+            width: rect.width * xScale,
+            height: rect.height * yScale
+        ).integral
+        guard pixelRect.width >= 2, pixelRect.height >= 2 else { return nil }
+        let input = CIImage(cgImage: capture.image)
+        let filtered: CIImage
+        if annotation.tool == .mosaic {
+            filtered = input.applyingFilter("CIPixellate", parameters: [
+                kCIInputScaleKey: max(8, 10 * min(xScale, yScale)),
+                kCIInputCenterKey: CIVector(x: pixelRect.midX, y: pixelRect.midY)
+            ])
+        } else {
+            filtered = input
+                .clampedToExtent()
+                .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: max(6, 8 * min(xScale, yScale))])
+                .cropped(to: input.extent)
+        }
+        return coreImageContext.createCGImage(filtered.cropped(to: pixelRect), from: pixelRect)
     }
 
     private func drawArrowHead(from start: CGPoint, to end: CGPoint) {
@@ -1322,6 +1515,10 @@ final class RegionSelectionView: NSView {
                 return distance(from: point, toSegmentFrom: annotation.start, to: annotation.end) <= 8
             case .pen:
                 return annotation.points.contains { hypot($0.x - point.x, $0.y - point.y) <= 8 }
+            case .highlight:
+                return distance(from: point, toSegmentFrom: annotation.start, to: annotation.end) <= 12
+            case .rectangle, .mosaic, .blur, .text:
+                return annotationRect(for: annotation).insetBy(dx: -6, dy: -6).contains(point)
             case .none:
                 return false
             }
@@ -1467,6 +1664,7 @@ final class RegionSelectionView: NSView {
 
     private func complete(output: CaptureSettings.Output) {
         guard !isCompleting else { return }
+        if !textAnnotationField.isHidden { commitTextAnnotation() }
         guard let selection = selectionRect,
               selection.width >= 2,
               selection.height >= 2 else {
@@ -1603,11 +1801,26 @@ final class RegionSelectionView: NSView {
 
 extension RegionSelectionView: NSTextFieldDelegate {
     func controlTextDidBeginEditing(_ notification: Notification) {
+        guard notification.object as AnyObject? === widthField || notification.object as AnyObject? === heightField else { return }
         setDimensionFeedback(.editing)
     }
 
     func controlTextDidChange(_ notification: Notification) {
+        guard notification.object as AnyObject? === widthField || notification.object as AnyObject? === heightField else { return }
         setPresetButtonTitle(nil)
         setDimensionFeedback(.editing)
+    }
+
+    func control(
+        _ control: NSControl,
+        textView: NSTextView,
+        doCommandBy commandSelector: Selector
+    ) -> Bool {
+        guard control === textAnnotationField else { return false }
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            cancelTextAnnotation()
+            return true
+        }
+        return false
     }
 }

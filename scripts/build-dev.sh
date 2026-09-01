@@ -25,6 +25,7 @@ swiftc \
   -o "$output_dir/CutterMac" \
   -framework AppKit \
   -framework CoreGraphics \
+  -framework CoreImage \
   -framework ScreenCaptureKit
 
 print "$output_dir/CutterMac"
