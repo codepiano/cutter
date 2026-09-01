@@ -149,9 +149,12 @@ final class RegionSelectionView: NSView {
                 border = NSBezierPath(rect: selection.insetBy(dx: 0.5, dy: 0.5))
             case .circle:
                 border = NSBezierPath(ovalIn: selection.insetBy(dx: 0.5, dy: 0.5))
+            case .stamp:
+                border = NSBezierPath(rect: selection.insetBy(dx: 0.5, dy: 0.5))
             }
             border.lineWidth = 1
             border.stroke()
+            if shape == .stamp { drawStampPerforations(in: selection) }
 
             if fixedSelection == nil {
                 drawDimensions(for: selection, near: dragCurrent ?? CGPoint(x: selection.maxX, y: selection.minY))
@@ -337,7 +340,7 @@ final class RegionSelectionView: NSView {
     }
 
     private func constrained(_ rect: CGRect) -> CGRect {
-        guard shape != .rectangle else { return rect }
+        guard shape.locksAspectRatio else { return rect }
         let side = min(rect.width, rect.height)
         return CGRect(x: rect.minX, y: rect.minY, width: side, height: side)
     }
@@ -412,7 +415,71 @@ final class RegionSelectionView: NSView {
                 NSGraphicsContext.restoreGraphicsState()
             }
         }
+        if shape == .stamp {
+            context.saveGState()
+            context.setBlendMode(.clear)
+            let outputRect = CGRect(x: 0, y: 0, width: cropped.width, height: cropped.height)
+            let outputScale = min(xScale, yScale)
+            for hole in stampHoleRects(
+                in: outputRect,
+                preferredDiameter: 8 * outputScale,
+                preferredSpacing: 15 * outputScale
+            ) {
+                context.fillEllipse(in: hole)
+            }
+            context.restoreGState()
+        }
         return context.makeImage()
+    }
+
+    private func drawStampPerforations(in selection: CGRect) {
+        let holes = stampHoleRects(in: selection, preferredDiameter: 8, preferredSpacing: 15)
+        NSColor.black.withAlphaComponent(0.38).setFill()
+        NSColor.controlAccentColor.withAlphaComponent(0.9).setStroke()
+        for hole in holes {
+            let path = NSBezierPath(ovalIn: hole)
+            path.fill()
+            path.lineWidth = 1
+            path.stroke()
+        }
+    }
+
+    private func stampHoleRects(
+        in rect: CGRect,
+        preferredDiameter: CGFloat,
+        preferredSpacing: CGFloat
+    ) -> [CGRect] {
+        guard min(rect.width, rect.height) >= 12 else { return [] }
+        let diameter = min(preferredDiameter, min(rect.width, rect.height) / 5)
+        let radius = diameter / 2
+        let margin = diameter * 1.25
+        let horizontal = stampPositions(
+            from: rect.minX + margin,
+            to: rect.maxX - margin,
+            preferredSpacing: max(preferredSpacing, diameter * 1.5)
+        )
+        let vertical = stampPositions(
+            from: rect.minY + margin,
+            to: rect.maxY - margin,
+            preferredSpacing: max(preferredSpacing, diameter * 1.5)
+        )
+        var holes: [CGRect] = []
+        for x in horizontal {
+            holes.append(CGRect(x: x - radius, y: rect.minY - radius, width: diameter, height: diameter))
+            holes.append(CGRect(x: x - radius, y: rect.maxY - radius, width: diameter, height: diameter))
+        }
+        for y in vertical {
+            holes.append(CGRect(x: rect.minX - radius, y: y - radius, width: diameter, height: diameter))
+            holes.append(CGRect(x: rect.maxX - radius, y: y - radius, width: diameter, height: diameter))
+        }
+        return holes
+    }
+
+    private func stampPositions(from start: CGFloat, to end: CGFloat, preferredSpacing: CGFloat) -> [CGFloat] {
+        guard end > start else { return [(start + end) / 2] }
+        let intervalCount = max(1, Int(((end - start) / preferredSpacing).rounded()))
+        let spacing = (end - start) / CGFloat(intervalCount)
+        return (0...intervalCount).map { start + CGFloat($0) * spacing }
     }
 
     private func clamped(_ point: CGPoint) -> CGPoint {
@@ -494,7 +561,9 @@ final class RegionSelectionView: NSView {
     }
 
     private func configureToolbarControls() {
-        let shapes: [(CaptureSettings.Shape, String)] = [(.rectangle, "矩形"), (.square, "正方形"), (.circle, "圆形")]
+        let shapes: [(CaptureSettings.Shape, String)] = [
+            (.rectangle, "矩形"), (.square, "正方形"), (.circle, "圆形"), (.stamp, "邮票")
+        ]
         for (candidate, title) in shapes {
             let button = makeToolbarButton(title: title, fontSize: 12)
             button.target = self
@@ -660,7 +729,7 @@ final class RegionSelectionView: NSView {
         let topHeight: CGFloat = 30
         let gap: CGFloat = 8
 
-        let shapeGroupWidth = min(150, innerWidth * 0.23)
+        let shapeGroupWidth = min(190, innerWidth * 0.27)
         let colorGroupWidth = min(180, innerWidth * 0.25)
         let historyGroupWidth: CGFloat = min(60, innerWidth * 0.10)
         let toolGroupWidth = max(
@@ -929,7 +998,7 @@ final class RegionSelectionView: NSView {
 
     @objc private func applySizePreset(_ sender: NSMenuItem) {
         guard let preset = preset(from: sender) else { return }
-        if preset.width != preset.height && shape != .rectangle {
+        if preset.width != preset.height && shape.locksAspectRatio {
             shape = .rectangle
             updateToolbarControlStyles()
         }
@@ -970,7 +1039,7 @@ final class RegionSelectionView: NSView {
         let parsedWidth = Double(widthField.stringValue)
         let parsedHeight = Double(heightField.stringValue)
         let widthIsValid = parsedWidth.map { $0.isFinite && $0.rounded() == $0 } ?? false
-        let heightIsValid = shape != .rectangle
+        let heightIsValid = shape.locksAspectRatio
             || (parsedHeight.map { $0.isFinite && $0.rounded() == $0 } ?? false)
         guard widthIsValid,
               heightIsValid,
@@ -983,10 +1052,10 @@ final class RegionSelectionView: NSView {
             )
             return nil
         }
-        let height = shape == .rectangle ? parsedHeight.map(Int.init) ?? width : width
+        let height = shape.locksAspectRatio ? width : parsedHeight.map(Int.init) ?? width
         guard let preset = CaptureSizePreset(width: width, height: height) else {
             NSSound.beep()
-            setDimensionFeedback(.error, invalidWidth: true, invalidHeight: shape == .rectangle)
+            setDimensionFeedback(.error, invalidWidth: true, invalidHeight: !shape.locksAspectRatio)
             return nil
         }
         return preset
@@ -1293,7 +1362,7 @@ final class RegionSelectionView: NSView {
         widthField.isHidden = false
         heightField.isHidden = false
         dimensionSeparator.isHidden = false
-        heightField.isEnabled = shape == .rectangle
+        heightField.isEnabled = !shape.locksAspectRatio
 
         let xScale = CGFloat(capture.image.width) / bounds.width
         let yScale = CGFloat(capture.image.height) / bounds.height
@@ -1307,7 +1376,7 @@ final class RegionSelectionView: NSView {
         let parsedWidth = Double(widthField.stringValue)
         let parsedHeight = Double(heightField.stringValue)
         let widthIsValid = parsedWidth.map { $0 >= 2 } ?? false
-        let heightIsValid = shape != .rectangle || (parsedHeight.map { $0 >= 2 } ?? false)
+        let heightIsValid = shape.locksAspectRatio || (parsedHeight.map { $0 >= 2 } ?? false)
         guard let selection = selectionRect,
               let width = parsedWidth,
               widthIsValid,
@@ -1324,7 +1393,7 @@ final class RegionSelectionView: NSView {
         let xScale = CGFloat(capture.image.width) / bounds.width
         let yScale = CGFloat(capture.image.height) / bounds.height
         let targetWidth = CGFloat(width) / xScale
-        let targetHeight = (shape == .rectangle ? CGFloat(height) : CGFloat(width)) / yScale
+        let targetHeight = (shape.locksAspectRatio ? CGFloat(width) : CGFloat(height)) / yScale
         let center = CGPoint(x: selection.midX, y: selection.midY)
         let requested = CGRect(
             x: center.x - targetWidth / 2,

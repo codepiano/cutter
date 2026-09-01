@@ -5,6 +5,11 @@ struct CaptureSettings {
         case rectangle
         case square
         case circle
+        case stamp
+
+        var locksAspectRatio: Bool {
+            self == .square || self == .circle
+        }
     }
 
     enum Output: String {
