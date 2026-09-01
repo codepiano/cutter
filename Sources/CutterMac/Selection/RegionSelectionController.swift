@@ -8,15 +8,27 @@ final class RegionSelectionController {
 
     func selectRegion(
         from capture: CapturedImage,
-        defaultOutput: CaptureSettings.Output
+        defaultOutput: CaptureSettings.Output,
+        windows: [CapturableWindow] = [],
+        windowCaptureProvider: (@Sendable (CGWindowID) async throws -> CapturedImage)? = nil
     ) async -> (image: CGImage, output: CaptureSettings.Output)? {
         await withCheckedContinuation { continuation in
             self.continuation = continuation
-            presentOverlay(for: capture, defaultOutput: defaultOutput)
+            presentOverlay(
+                for: capture,
+                defaultOutput: defaultOutput,
+                windows: windows,
+                windowCaptureProvider: windowCaptureProvider
+            )
         }
     }
 
-    private func presentOverlay(for capture: CapturedImage, defaultOutput: CaptureSettings.Output) {
+    private func presentOverlay(
+        for capture: CapturedImage,
+        defaultOutput: CaptureSettings.Output,
+        windows: [CapturableWindow],
+        windowCaptureProvider: (@Sendable (CGWindowID) async throws -> CapturedImage)?
+    ) {
         guard let screen = NSScreen.screens.first(where: {
             ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
                 == capture.displayID
@@ -28,7 +40,9 @@ final class RegionSelectionController {
         let overlay = RegionSelectionView(
             frame: NSRect(origin: .zero, size: screen.frame.size),
             capture: capture,
-            defaultOutput: defaultOutput
+            defaultOutput: defaultOutput,
+            captureWindows: windows,
+            windowCaptureProvider: windowCaptureProvider
         )
         overlay.onSelection = { [weak self] image, output in
             self?.finish(with: (image, output))
@@ -48,6 +62,7 @@ final class RegionSelectionController {
         window.backgroundColor = .black
         window.level = .screenSaver
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        window.acceptsMouseMovedEvents = true
         window.contentView = overlay
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(overlay)

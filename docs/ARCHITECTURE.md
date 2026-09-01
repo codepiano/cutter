@@ -40,7 +40,8 @@ ImageClipboard               ImageFileWriter
 ### `Capture`
 
 - `ScreenCaptureBackend`：屏幕捕获抽象。
-- `ScreenCaptureKitBackend`：当前 macOS 实现，冻结主显示器图像并保留缩放信息。
+- `ScreenCaptureKitBackend`：冻结主显示器图像、枚举普通窗口，并通过 `desktopIndependentWindow` 过滤器直接捕获选定窗口。
+- `CaptureWorkspace`：一次捕获准备阶段产生的主显示器图像和按前后顺序排列的窗口元数据。
 - `CaptureSettings`：鼠标指针、默认输出和存储目录。
 - `CaptureCountdownController`：位于主显示器中央的非激活倒计时 HUD；捕获前和取消后负责隐藏窗口。
 - `CaptureSizePreset` / `CaptureSizePresetStore`：内置尺寸、自定义尺寸校验、去重和 `UserDefaults` 持久化。
@@ -53,6 +54,7 @@ ImageClipboard               ImageFileWriter
 `RegionSelectionView` 负责：
 
 - 矩形、正方形、圆形和邮票打孔选区。
+- 窗口悬停命中、点击锁定，以及 Space/拖动切换自由区域。
 - 八个缩放手柄、选区移动和屏幕边界限制。
 - 精确像素输入、输入状态反馈和尺寸预设菜单。
 - 选择、画笔、直线、箭头、数字和字母标注。
@@ -81,6 +83,8 @@ AppKit 选区点数
 缩放比例来自捕获图像像素尺寸与覆盖窗口尺寸之比。尺寸输入和预设都以最终截图像素为单位。
 
 标注在一次选择会话中使用覆盖窗口坐标保存。移动选区时，当前标注及撤销/重做快照应用同一实际位移，因此标注相对选区的位置保持不变；输出时再映射到裁剪图像像素。
+
+智能窗口选择只接收完整位于主显示器、`windowLayer == 0`、尺寸达到最低阈值且不属于 Cutter 进程的窗口。ScreenCaptureKit 窗口 frame 使用全局显示器坐标；`RegionSelectionView` 将它转换为覆盖窗口的左下原点坐标。单击窗口后，完成动作通过注入的异步窗口捕获闭包取得独立窗口图像，再复用现有标注渲染器；一旦用户移动、缩放或输入新尺寸，窗口来源失效并退回冻结屏幕区域裁剪。
 
 自定义颜色通过 expanded `NSColorWell` 接入 AppKit 共享 `NSColorPanel`。选择会话创建时，颜色面板临时提升到截图遮罩之上；会话完成或取消时关闭面板并恢复原窗口层级。标注对象保存标准 RGB `NSColor`，因此快捷色和任意自定义色共享同一预览、撤销和导出路径。
 

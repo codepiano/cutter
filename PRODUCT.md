@@ -19,7 +19,7 @@ The app runs quietly from the macOS menu bar. Capture, selection overlays, permi
 ## Capabilities and Constraints
 
 - First platform: macOS.
-- Current capture mode: primary-display region capture.
+- Current capture modes: smart normal-window selection and free region selection on the primary display; Space toggles window recognition before selection.
 - Current editing: rectangle, square, circle, and transparent perforated stamp selections; precise pixel dimensions; persistent built-in and custom size presets; pen, line, arrow, numeric-label, and letter-label annotations with quick and arbitrary system colors; undo and redo.
 - Current outputs: copy, save to the local Pictures directory, or copy and save.
 - Capture scheduling: immediate, 3-second, 5-second, or 10-second delay with a cancellable native countdown HUD.
@@ -27,7 +27,7 @@ The app runs quietly from the macOS menu bar. Capture, selection overlays, permi
 - Native platform code owns screen capture, coordinate conversion, permissions, shortcuts, clipboard behavior, and window management.
 - The reusable core will own image transforms, annotation data, undo/redo, export rules, and later scrolling-image stitching.
 - No accounts, network upload, cloud synchronization, screen recording, or video processing.
-- Window capture, full-screen capture, multi-display selection, pinning, and scrolling capture are not implemented yet.
+- Full-screen capture, multi-display selection, pinning, and scrolling capture are not implemented yet.
 
 ## Product Principles
 

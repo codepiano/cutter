@@ -8,6 +8,8 @@ final class RegionSelectionView: NSView {
 
     private let capture: CapturedImage
     private let defaultOutput: CaptureSettings.Output
+    private let captureWindows: [CapturableWindow]
+    private let windowCaptureProvider: (@Sendable (CGWindowID) async throws -> CapturedImage)?
     private var shape: CaptureSettings.Shape = .rectangle
     private var dragStart: CGPoint?
     private var dragCurrent: CGPoint?
@@ -30,6 +32,13 @@ final class RegionSelectionView: NSView {
         redoStack: [[Annotation]]
     )?
     private var resizingFrom: (rect: CGRect, point: CGPoint, handle: Handle)?
+    private var windowSelectionEnabled = true
+    private var hoveredWindowID: CGWindowID?
+    private var pressedWindowID: CGWindowID?
+    private var windowPressPoint: CGPoint?
+    private var selectedWindowID: CGWindowID?
+    private var isCompleting = false
+    private var pointerTrackingArea: NSTrackingArea?
     private let widthField = NSTextField()
     private let heightField = NSTextField()
     private let dimensionSeparator = NSTextField(labelWithString: "×")
@@ -106,12 +115,17 @@ final class RegionSelectionView: NSView {
         frame frameRect: NSRect,
         capture: CapturedImage,
         defaultOutput: CaptureSettings.Output,
-        presetStore: CaptureSizePresetStore = CaptureSizePresetStore()
+        presetStore: CaptureSizePresetStore = CaptureSizePresetStore(),
+        captureWindows: [CapturableWindow] = [],
+        windowCaptureProvider: (@Sendable (CGWindowID) async throws -> CapturedImage)? = nil
     ) {
         self.capture = capture
         self.defaultOutput = defaultOutput
         self.presetStore = presetStore
+        self.captureWindows = captureWindows
+        self.windowCaptureProvider = windowCaptureProvider
         super.init(frame: frameRect)
+        windowSelectionEnabled = !captureWindows.isEmpty
         configureDimensionFields()
         configureToolbarControls()
     }
@@ -123,6 +137,28 @@ final class RegionSelectionView: NSView {
 
     override var acceptsFirstResponder: Bool { true }
     override var isFlipped: Bool { false }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let pointerTrackingArea { removeTrackingArea(pointerTrackingArea) }
+        let trackingArea = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(trackingArea)
+        pointerTrackingArea = trackingArea
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        guard fixedSelection == nil, windowSelectionEnabled else { return }
+        let point = clamped(convert(event.locationInWindow, from: nil))
+        let nextWindowID = window(at: point)?.id
+        guard hoveredWindowID != nextWindowID else { return }
+        hoveredWindowID = nextWindowID
+        needsDisplay = true
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
@@ -162,6 +198,19 @@ final class RegionSelectionView: NSView {
             drawToolbar(for: selection)
             drawHandles(for: selection)
             drawAnnotations()
+        } else if windowSelectionEnabled,
+                  let hoveredWindowID,
+                  let hoveredWindow = captureWindows.first(where: { $0.id == hoveredWindowID }),
+                  let windowRect = localRect(for: hoveredWindow) {
+            let outside = NSBezierPath(rect: bounds)
+            outside.appendRect(windowRect)
+            outside.windingRule = .evenOdd
+            outside.fill()
+            NSColor.controlAccentColor.setStroke()
+            let border = NSBezierPath(roundedRect: windowRect.insetBy(dx: 0.5, dy: 0.5), xRadius: 6, yRadius: 6)
+            border.lineWidth = 2
+            border.stroke()
+            drawWindowHint(for: hoveredWindow, rect: windowRect)
         } else {
             NSBezierPath.fill(bounds)
         }
@@ -172,8 +221,19 @@ final class RegionSelectionView: NSView {
         if let selection = selectionRect, toolbarRect(for: selection).contains(point) {
             return
         }
+        if selectionRect == nil,
+           windowSelectionEnabled,
+           let candidate = window(at: point) {
+            pressedWindowID = candidate.id
+            windowPressPoint = point
+            dragStart = point
+            dragCurrent = point
+            needsDisplay = true
+            return
+        }
         if let selection = selectionRect, let handle = handle(at: point) {
             setPresetButtonTitle(nil)
+            selectedWindowID = nil
             resizingFrom = (selection, point, handle)
             return
         }
@@ -200,18 +260,30 @@ final class RegionSelectionView: NSView {
             return
         }
         if let selection = selectionRect, selection.contains(point) {
+            selectedWindowID = nil
             movingFrom = (selection, point, annotations, undoStack, redoStack)
             return
         }
         dragStart = point
         dragCurrent = point
         fixedSelection = nil
+        selectedWindowID = nil
         setPresetButtonTitle(nil)
         needsDisplay = true
     }
 
     override func mouseDragged(with event: NSEvent) {
         let point = clamped(convert(event.locationInWindow, from: nil))
+        if let windowPressPoint {
+            guard hypot(point.x - windowPressPoint.x, point.y - windowPressPoint.y) > 4 else { return }
+            pressedWindowID = nil
+            hoveredWindowID = nil
+            self.windowPressPoint = nil
+            dragStart = windowPressPoint
+            dragCurrent = point
+            needsDisplay = true
+            return
+        }
         if let movingAnnotationFrom {
             if !movingAnnotationDidChange {
                 registerAnnotationChange()
@@ -261,6 +333,24 @@ final class RegionSelectionView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if let pressedWindowID, let windowPressPoint {
+            let point = clamped(convert(event.locationInWindow, from: nil))
+            self.pressedWindowID = nil
+            self.windowPressPoint = nil
+            if hypot(point.x - windowPressPoint.x, point.y - windowPressPoint.y) <= 4,
+               let selectedWindow = captureWindows.first(where: { $0.id == pressedWindowID }),
+               let selectedRect = localRect(for: selectedWindow) {
+                shape = .rectangle
+                fixedSelection = selectedRect.integral
+                selectedWindowID = pressedWindowID
+                hoveredWindowID = nil
+                dragStart = nil
+                dragCurrent = nil
+                updateToolbarControlStyles()
+                needsDisplay = true
+                return
+            }
+        }
         if let start = annotationStart, let end = annotationCurrent {
             registerAnnotationChange()
             annotations.append(Annotation(tool: activeTool, start: start, end: end, text: nil, color: activeColor, points: penPoints))
@@ -298,7 +388,13 @@ final class RegionSelectionView: NSView {
 
     override func keyDown(with event: NSEvent) {
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        if modifiers.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "z" {
+        if event.keyCode == 49, fixedSelection == nil, !captureWindows.isEmpty {
+            windowSelectionEnabled.toggle()
+            hoveredWindowID = nil
+            pressedWindowID = nil
+            windowPressPoint = nil
+            needsDisplay = true
+        } else if modifiers.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "z" {
             modifiers.contains(.shift) ? redoAnnotationChange() : undoAnnotationChange()
         } else if event.keyCode == 53 {
             if activeTool != .none {
@@ -486,6 +582,59 @@ final class RegionSelectionView: NSView {
         CGPoint(
             x: min(max(point.x, bounds.minX), bounds.maxX),
             y: min(max(point.y, bounds.minY), bounds.maxY)
+        )
+    }
+
+    private func window(at point: CGPoint) -> CapturableWindow? {
+        captureWindows.first(where: { window in
+            localRect(for: window)?.contains(point) == true
+        })
+    }
+
+    private func localRect(for window: CapturableWindow) -> CGRect? {
+        guard window.displayID == capture.displayID else { return nil }
+        let displayBounds = CGDisplayBounds(capture.displayID)
+        let rect = CGRect(
+            x: window.frame.minX - displayBounds.minX,
+            y: displayBounds.maxY - window.frame.maxY,
+            width: window.frame.width,
+            height: window.frame.height
+        ).intersection(bounds)
+        return rect.isNull || rect.width < 2 || rect.height < 2 ? nil : rect
+    }
+
+    private func drawWindowHint(for window: CapturableWindow, rect: CGRect) {
+        let primaryText = window.title.isEmpty
+            ? window.ownerName
+            : "\(window.ownerName) · \(window.title)"
+        let primary = NSAttributedString(string: primaryText, attributes: [
+            .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
+            .foregroundColor: NSColor.white
+        ])
+        let secondary = NSAttributedString(string: "单击选择窗口 · 拖动自由区域 · Space 切换", attributes: [
+            .font: NSFont.systemFont(ofSize: 10, weight: .medium),
+            .foregroundColor: NSColor.white.withAlphaComponent(0.72)
+        ])
+        let width = min(max(primary.size().width, secondary.size().width) + 20, bounds.width - 16)
+        let height: CGFloat = 46
+        let preferredY = rect.minY - height - 8 >= bounds.minY + 8
+            ? rect.minY - height - 8
+            : rect.maxY + 8
+        let box = CGRect(
+            x: min(max(rect.minX, bounds.minX + 8), bounds.maxX - width - 8),
+            y: min(max(preferredY, bounds.minY + 8), bounds.maxY - height - 8),
+            width: width,
+            height: height
+        )
+        NSColor.black.withAlphaComponent(0.86).setFill()
+        NSBezierPath(roundedRect: box, xRadius: 9, yRadius: 9).fill()
+        primary.draw(
+            with: CGRect(x: box.minX + 10, y: box.minY + 23, width: box.width - 20, height: 16),
+            options: [.truncatesLastVisibleLine, .usesLineFragmentOrigin]
+        )
+        secondary.draw(
+            with: CGRect(x: box.minX + 10, y: box.minY + 7, width: box.width - 20, height: 14),
+            options: [.truncatesLastVisibleLine, .usesLineFragmentOrigin]
         )
     }
 
@@ -904,6 +1053,7 @@ final class RegionSelectionView: NSView {
 
     @objc private func selectShape(_ sender: NSButton) {
         guard let candidate = shapeButtons.first(where: { $0.button === sender })?.shape else { return }
+        if candidate != .rectangle { selectedWindowID = nil }
         shape = candidate
         if let selection = fixedSelection { fixedSelection = constrained(selection) }
         setDimensionFeedback(.idle)
@@ -998,6 +1148,7 @@ final class RegionSelectionView: NSView {
 
     @objc private func applySizePreset(_ sender: NSMenuItem) {
         guard let preset = preset(from: sender) else { return }
+        selectedWindowID = nil
         if preset.width != preset.height && shape.locksAspectRatio {
             shape = .rectangle
             updateToolbarControlStyles()
@@ -1315,14 +1466,54 @@ final class RegionSelectionView: NSView {
     }
 
     private func complete(output: CaptureSettings.Output) {
+        guard !isCompleting else { return }
         guard let selection = selectionRect,
               selection.width >= 2,
-              selection.height >= 2,
-              let cropped = crop(selection) else {
+              selection.height >= 2 else {
+            onCancel?()
+            return
+        }
+
+        if let selectedWindowID, let windowCaptureProvider {
+            isCompleting = true
+            setControlsEnabled(false)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    let capturedWindow = try await windowCaptureProvider(selectedWindowID)
+                    guard let rendered = self.renderAnnotations(
+                        on: capturedWindow.image,
+                        selection: selection
+                    ) else {
+                        throw ScreenCaptureError.windowUnavailable
+                    }
+                    self.onSelection?(rendered, output)
+                } catch {
+                    self.isCompleting = false
+                    self.selectedWindowID = nil
+                    self.setControlsEnabled(true)
+                    let alert = NSAlert(error: error)
+                    alert.alertStyle = .warning
+                    alert.window.level = .screenSaver
+                    alert.runModal()
+                }
+            }
+            return
+        }
+
+        guard let cropped = crop(selection) else {
             onCancel?()
             return
         }
         onSelection?(cropped, output)
+    }
+
+    private func setControlsEnabled(_ enabled: Bool) {
+        for view in toolbarViews {
+            (view as? NSControl)?.isEnabled = enabled
+        }
+        widthField.isEnabled = enabled
+        heightField.isEnabled = enabled && !shape.locksAspectRatio
     }
 
     private func configureDimensionFields() {
@@ -1373,6 +1564,7 @@ final class RegionSelectionView: NSView {
     }
 
     @objc private func commitDimensionFields() {
+        selectedWindowID = nil
         let parsedWidth = Double(widthField.stringValue)
         let parsedHeight = Double(heightField.stringValue)
         let widthIsValid = parsedWidth.map { $0 >= 2 } ?? false

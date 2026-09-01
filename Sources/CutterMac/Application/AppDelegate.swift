@@ -55,10 +55,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.captureItem = captureItem
 
         let modeMenu = NSMenu()
-        let regionItem = modeMenu.addItem(withTitle: "区域截图", action: nil, keyEquivalent: "")
+        let regionItem = modeMenu.addItem(withTitle: "智能窗口与区域截图", action: nil, keyEquivalent: "")
         regionItem.state = .on
-        let windowItem = modeMenu.addItem(withTitle: "窗口截图（即将支持）", action: nil, keyEquivalent: "")
-        windowItem.isEnabled = false
         let fullScreenItem = modeMenu.addItem(withTitle: "全屏截图（即将支持）", action: nil, keyEquivalent: "")
         fullScreenItem.isEnabled = false
         let modeItem = menu.addItem(withTitle: "截图方式", action: nil, keyEquivalent: "")
@@ -156,14 +154,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func performRegionCapture() async throws {
-        let capture = try await captureBackend.capturePrimaryDisplay(
+        let workspace = try await captureBackend.preparePrimaryDisplay(
             includeCursor: captureSettings.includeCursor
         )
+        let includeCursor = captureSettings.includeCursor
+        let backend = captureBackend
         let controller = RegionSelectionController()
         selectionController = controller
         guard let result = await controller.selectRegion(
-            from: capture,
-            defaultOutput: captureSettings.output
+            from: workspace.display,
+            defaultOutput: captureSettings.output,
+            windows: workspace.windows,
+            windowCaptureProvider: { windowID in
+                try await backend.captureWindow(id: windowID, includeCursor: includeCursor)
+            }
         ) else {
             selectionController = nil
             return
@@ -173,14 +177,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         captureSettings.persist()
         switch result.output {
         case .copy:
-            try ImageClipboard.copy(result.image, scaleFactor: capture.scaleFactor)
+            try ImageClipboard.copy(result.image, scaleFactor: workspace.display.scaleFactor)
         case .save:
             _ = try ImageFileWriter.savePNG(
                 result.image,
                 to: captureSettings.downloadDirectory
             )
         case .copyAndSave:
-            try ImageClipboard.copy(result.image, scaleFactor: capture.scaleFactor)
+            try ImageClipboard.copy(result.image, scaleFactor: workspace.display.scaleFactor)
             _ = try ImageFileWriter.savePNG(
                 result.image,
                 to: captureSettings.downloadDirectory
