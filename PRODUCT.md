@@ -20,7 +20,7 @@ The app runs quietly from the macOS menu bar. Capture, selection overlays, permi
 
 - First platform: macOS.
 - Current capture modes: smart normal-window selection and free region selection on the primary display; Space toggles window recognition before selection.
-- Current editing: rectangle, square, circle, and transparent perforated stamp selections; precise pixel dimensions; persistent built-in and custom size presets; pen, line, arrow, numeric-label, letter-label, rectangle, text, highlight, random-content mosaic, and random-content blur annotations with quick and arbitrary system colors; undo and redo.
+- Current editing: rectangle, square, circle, and transparent perforated stamp selections; precise pixel dimensions; persistent built-in and custom size presets; pen, line, arrow, numeric-label, letter-label, rectangle, text, highlight, random-content mosaic, and random-content blur annotations with quick and arbitrary system colors; multi-selection, duplication, z-order, alignment, line-width, and font-size editing; undo and redo.
 - Current outputs: copy, save to the local Pictures directory, or copy and save.
 - Capture scheduling: immediate, 3-second, 5-second, or 10-second delay with a cancellable native countdown HUD.
 - Future architecture: a reusable image-processing core with thin platform-specific shells.

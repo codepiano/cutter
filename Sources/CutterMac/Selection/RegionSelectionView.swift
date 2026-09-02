@@ -20,7 +20,10 @@ final class RegionSelectionView: NSView {
     private var undoStack: [[Annotation]] = []
     private var redoStack: [[Annotation]] = []
     private var selectedAnnotationIndex: Int?
-    private var movingAnnotationFrom: (index: Int, point: CGPoint, annotation: Annotation)?
+    private var additionalSelectedAnnotationIndices: Set<Int> = []
+    private var annotationLineWidth: CGFloat = 2
+    private var annotationFontSize: CGFloat = 16
+    private var movingAnnotationsFrom: [(index: Int, point: CGPoint, annotation: Annotation)]?
     private var movingAnnotationDidChange = false
     private var annotationStart: CGPoint?
     private var annotationCurrent: CGPoint?
@@ -44,6 +47,12 @@ final class RegionSelectionView: NSView {
     private let textAnnotationField = NSTextField()
     private var pendingTextPoint: CGPoint?
     private let coreImageContext = CIContext()
+    private let lineWidthButton = NSButton()
+    private let fontSizeButton = NSButton()
+    private let duplicateAnnotationButton = NSButton()
+    private let bringForwardButton = NSButton()
+    private let sendBackwardButton = NSButton()
+    private let alignAnnotationButton = NSButton()
     private let widthField = NSTextField()
     private let heightField = NSTextField()
     private let dimensionSeparator = NSTextField(labelWithString: "×")
@@ -113,6 +122,8 @@ final class RegionSelectionView: NSView {
         let color: AnnotationColor
         let points: [CGPoint]
         let privacySeed: UInt64?
+        let lineWidth: CGFloat
+        let fontSize: CGFloat
         init(
             tool: AnnotationTool,
             start: CGPoint,
@@ -120,7 +131,9 @@ final class RegionSelectionView: NSView {
             text: String?,
             color: AnnotationColor,
             points: [CGPoint] = [],
-            privacySeed: UInt64? = nil
+            privacySeed: UInt64? = nil,
+            lineWidth: CGFloat = 2,
+            fontSize: CGFloat = 18
         ) {
             self.tool = tool
             self.start = start
@@ -129,6 +142,8 @@ final class RegionSelectionView: NSView {
             self.color = color
             self.points = points
             self.privacySeed = privacySeed
+            self.lineWidth = lineWidth
+            self.fontSize = fontSize
         }
     }
     private var penPoints: [CGPoint] = []
@@ -151,6 +166,7 @@ final class RegionSelectionView: NSView {
         configureDimensionFields()
         configureTextAnnotationField()
         configureToolbarControls()
+        configureAnnotationContextControls()
     }
 
     @available(*, unavailable)
@@ -261,8 +277,21 @@ final class RegionSelectionView: NSView {
             return
         }
         if activeTool == .none, let index = annotation(at: point) {
-            selectedAnnotationIndex = index
-            movingAnnotationFrom = (index, point, annotations[index])
+            var indices = selectedAnnotationIndices
+            if event.modifierFlags.contains(.shift) {
+                if indices.contains(index) { indices.remove(index) } else { indices.insert(index) }
+            } else {
+                indices = [index]
+            }
+            setAnnotationSelection(indices)
+            guard indices.contains(index) else {
+                needsDisplay = true
+                return
+            }
+            movingAnnotationsFrom = indices.sorted().compactMap { annotationIndex in
+                guard annotations.indices.contains(annotationIndex) else { return nil }
+                return (annotationIndex, point, annotations[annotationIndex])
+            }
             movingAnnotationDidChange = false
             needsDisplay = true
             return
@@ -275,7 +304,15 @@ final class RegionSelectionView: NSView {
             let index = annotations.filter { $0.tool == activeTool }.count + 1
             let text = activeTool == .number ? "\(index)" : alphabeticLabel(for: index)
             registerAnnotationChange()
-            annotations.append(Annotation(tool: activeTool, start: point, end: point, text: text, color: activeColor))
+            annotations.append(Annotation(
+                tool: activeTool,
+                start: point,
+                end: point,
+                text: text,
+                color: activeColor,
+                fontSize: annotationFontSize
+            ))
+            setAnnotationSelection([annotations.count - 1])
             needsDisplay = true
             return
         }
@@ -313,23 +350,17 @@ final class RegionSelectionView: NSView {
             needsDisplay = true
             return
         }
-        if let movingAnnotationFrom {
+        if let movingAnnotationsFrom {
             if !movingAnnotationDidChange {
                 registerAnnotationChange()
                 movingAnnotationDidChange = true
             }
-            let dx = point.x - movingAnnotationFrom.point.x
-            let dy = point.y - movingAnnotationFrom.point.y
-            let original = movingAnnotationFrom.annotation
-            annotations[movingAnnotationFrom.index] = Annotation(
-                tool: original.tool,
-                start: original.start.applying(CGAffineTransform(translationX: dx, y: dy)),
-                end: original.end.applying(CGAffineTransform(translationX: dx, y: dy)),
-                text: original.text,
-                color: original.color,
-                points: original.points.map { $0.applying(CGAffineTransform(translationX: dx, y: dy)) },
-                privacySeed: original.privacySeed
-            )
+            guard let anchor = movingAnnotationsFrom.first else { return }
+            let dx = point.x - anchor.point.x
+            let dy = point.y - anchor.point.y
+            for movingAnnotation in movingAnnotationsFrom {
+                annotations[movingAnnotation.index] = translated(movingAnnotation.annotation, dx: dx, dy: dy)
+            }
             needsDisplay = true
             return
         }
@@ -390,8 +421,11 @@ final class RegionSelectionView: NSView {
                 text: nil,
                 color: activeColor,
                 points: penPoints,
-                privacySeed: activePrivacySeed
+                privacySeed: activePrivacySeed,
+                lineWidth: annotationLineWidth,
+                fontSize: annotationFontSize
             ))
+            setAnnotationSelection([annotations.count - 1])
             annotationStart = nil
             annotationCurrent = nil
             penPoints = []
@@ -399,7 +433,7 @@ final class RegionSelectionView: NSView {
             needsDisplay = true
             return
         }
-        movingAnnotationFrom = nil
+        movingAnnotationsFrom = nil
         movingAnnotationDidChange = false
         if let movingFrom, let movedSelection = selectionRect {
             let appliedDX = movedSelection.minX - movingFrom.rect.minX
@@ -438,7 +472,7 @@ final class RegionSelectionView: NSView {
         } else if event.keyCode == 53 {
             if activeTool != .none {
                 activeTool = .none
-                selectedAnnotationIndex = nil
+                setAnnotationSelection([])
                 updateToolbarControlStyles()
                 needsDisplay = true
             } else {
@@ -455,7 +489,7 @@ final class RegionSelectionView: NSView {
             ]
             if let tool = shortcuts[key] {
                 activeTool = tool
-                selectedAnnotationIndex = nil
+                setAnnotationSelection([])
                 updateToolbarControlStyles()
                 needsDisplay = true
             } else {
@@ -523,7 +557,7 @@ final class RegionSelectionView: NSView {
             let end = point(annotation.end)
             context.setStrokeColor(annotation.color.color.cgColor)
             context.setFillColor(annotation.color.color.cgColor)
-            context.setLineWidth(max(2, 2 * xScale))
+            context.setLineWidth(max(1, annotation.lineWidth * xScale))
             if annotation.tool == .mosaic || annotation.tool == .blur {
                 applyPrivacyEffect(annotation, in: context, rect: CGRect(x: min(start.x, end.x), y: min(start.y, end.y), width: abs(end.x - start.x), height: abs(end.y - start.y)))
             } else if annotation.tool == .rectangle {
@@ -531,7 +565,7 @@ final class RegionSelectionView: NSView {
             } else if annotation.tool == .highlight {
                 context.saveGState()
                 context.setAlpha(0.32)
-                context.setLineWidth(max(10, 14 * xScale))
+                context.setLineWidth(max(10, annotation.lineWidth * 4 * xScale))
                 context.setLineCap(.round)
                 context.move(to: start)
                 context.addLine(to: end)
@@ -539,7 +573,7 @@ final class RegionSelectionView: NSView {
                 context.restoreGState()
             } else if annotation.tool == .text, let text = annotation.text {
                 let attributes: [NSAttributedString.Key: Any] = [
-                    .font: NSFont.systemFont(ofSize: 18 * xScale, weight: .semibold),
+                    .font: NSFont.systemFont(ofSize: annotation.fontSize * xScale, weight: .semibold),
                     .foregroundColor: annotation.color.color
                 ]
                 NSGraphicsContext.saveGraphicsState()
@@ -566,7 +600,7 @@ final class RegionSelectionView: NSView {
             } else if let text = annotation.text {
                 let radius = 14 * xScale
                 context.fillEllipse(in: CGRect(x: start.x - radius, y: start.y - radius, width: radius * 2, height: radius * 2))
-                let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 13 * xScale), .foregroundColor: NSColor.white]
+                let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: max(11, annotation.fontSize * 0.8 * xScale)), .foregroundColor: NSColor.white]
                 let string = NSAttributedString(string: text, attributes: attributes)
                 let size = string.size()
                 NSGraphicsContext.saveGraphicsState()
@@ -803,24 +837,28 @@ final class RegionSelectionView: NSView {
 
         NSColor.white.withAlphaComponent(0.035).setFill()
         NSBezierPath(
-            roundedRect: CGRect(x: toolbar.minX + 4, y: toolbar.minY + 44, width: toolbar.width - 8, height: 36),
+            roundedRect: CGRect(x: toolbar.minX + 4, y: toolbar.maxY - 40, width: toolbar.width - 8, height: 36),
             xRadius: 8,
             yRadius: 8
         ).fill()
 
         NSColor.white.withAlphaComponent(0.12).setStroke()
-        let separator = NSBezierPath()
-        separator.move(to: CGPoint(x: toolbar.minX + 8, y: toolbar.minY + 42))
-        separator.line(to: CGPoint(x: toolbar.maxX - 8, y: toolbar.minY + 42))
-        separator.lineWidth = 1
-        separator.stroke()
+        let separatorOffsets: [CGFloat] = selectedAnnotationIndices.isEmpty ? [42] : [42, 78]
+        for offset in separatorOffsets {
+            let separator = NSBezierPath()
+            separator.move(to: CGPoint(x: toolbar.minX + 8, y: toolbar.minY + offset))
+            separator.line(to: CGPoint(x: toolbar.maxX - 8, y: toolbar.minY + offset))
+            separator.lineWidth = 1
+            separator.stroke()
+        }
     }
 
     private func toolbarRect(for selection: CGRect) -> CGRect {
         let inset: CGFloat = 8
         let gap: CGFloat = 8
         let width = max(0, min(980, bounds.width - inset * 2))
-        let height = max(0, min(84, bounds.height - inset * 2))
+        let requestedHeight: CGFloat = selectedAnnotationIndices.isEmpty ? 84 : 122
+        let height = max(0, min(requestedHeight, bounds.height - inset * 2))
         let safeBounds = bounds.insetBy(dx: inset, dy: inset)
         let candidates = [
             CGRect(x: selection.minX, y: selection.minY - height - gap, width: width, height: height),
@@ -959,7 +997,7 @@ final class RegionSelectionView: NSView {
     }
 
     private func configureTextAnnotationField() {
-        textAnnotationField.font = NSFont.systemFont(ofSize: 18, weight: .semibold)
+        textAnnotationField.font = NSFont.systemFont(ofSize: annotationFontSize, weight: .semibold)
         textAnnotationField.textColor = activeColor.color
         textAnnotationField.backgroundColor = NSColor.black.withAlphaComponent(0.78)
         textAnnotationField.drawsBackground = true
@@ -972,6 +1010,38 @@ final class RegionSelectionView: NSView {
         textAnnotationField.isHidden = true
         textAnnotationField.setAccessibilityLabel("标注文本")
         addSubview(textAnnotationField)
+    }
+
+    private func configureAnnotationContextControls() {
+        configureTextButton(lineWidthButton, title: "线宽 2", fontSize: 11)
+        lineWidthButton.target = self
+        lineWidthButton.action = #selector(showLineWidthMenu(_:))
+        lineWidthButton.toolTip = "设置选中标注的线宽"
+        lineWidthButton.setAccessibilityLabel("线宽")
+        addSubview(lineWidthButton)
+
+        configureTextButton(fontSizeButton, title: "字号 18", fontSize: 11)
+        fontSizeButton.target = self
+        fontSizeButton.action = #selector(showFontSizeMenu(_:))
+        fontSizeButton.toolTip = "设置选中标注的字号"
+        fontSizeButton.setAccessibilityLabel("字号")
+        addSubview(fontSizeButton)
+
+        let commands: [(NSButton, String, Selector, String)] = [
+            (duplicateAnnotationButton, "复制", #selector(duplicateSelectedAnnotations), "复制选中标注"),
+            (bringForwardButton, "前移", #selector(bringSelectedAnnotationsForward), "将选中标注前移一层"),
+            (sendBackwardButton, "后移", #selector(sendSelectedAnnotationsBackward), "将选中标注后移一层"),
+            (alignAnnotationButton, "对齐…", #selector(showAlignmentMenu(_:)), "对齐选中标注")
+        ]
+        for (button, title, action, label) in commands {
+            configureTextButton(button, title: title, fontSize: 11)
+            button.target = self
+            button.action = action
+            button.toolTip = label
+            button.setAccessibilityLabel(label)
+            addSubview(button)
+        }
+        updateAnnotationContextControls()
     }
 
     private func makeToolbarButton(title: String, fontSize: CGFloat) -> NSButton {
@@ -1019,7 +1089,25 @@ final class RegionSelectionView: NSView {
         views.append(customColorWell)
         views.append(contentsOf: outputButtons.map { $0.button })
         views.append(contentsOf: [cancelButton, undoButton, redoButton, dimensionApplyButton, presetButton, dimensionLabel, pixelLabel])
+        views.append(contentsOf: annotationContextViews)
         return views
+    }
+
+    private var annotationContextViews: [NSView] {
+        [lineWidthButton, fontSizeButton, duplicateAnnotationButton, bringForwardButton, sendBackwardButton, alignAnnotationButton]
+    }
+
+    private var selectedAnnotationIndices: Set<Int> {
+        var indices = additionalSelectedAnnotationIndices
+        if let selectedAnnotationIndex { indices.insert(selectedAnnotationIndex) }
+        return indices
+    }
+
+    private func setAnnotationSelection(_ indices: Set<Int>) {
+        let valid = indices.filter { annotations.indices.contains($0) }.sorted()
+        selectedAnnotationIndex = valid.first
+        additionalSelectedAnnotationIndices = Set(valid.dropFirst())
+        updateAnnotationContextControls()
     }
 
     private func layoutToolbarControls() {
@@ -1032,7 +1120,8 @@ final class RegionSelectionView: NSView {
 
         let innerX = toolbar.minX + 6
         let innerWidth = max(0, toolbar.width - 12)
-        let topY = toolbar.minY + 47
+        let hasContext = !selectedAnnotationIndices.isEmpty
+        let topY = toolbar.maxY - 37
         let topHeight: CGFloat = 30
         let gap: CGFloat = 8
 
@@ -1084,6 +1173,18 @@ final class RegionSelectionView: NSView {
             height: 28
         )
 
+        let contextY = toolbar.minY + 46
+        let contextButtons = annotationContextViews.compactMap { $0 as? NSButton }
+        if hasContext {
+            let contextWidths: [CGFloat] = [116, 116, 70, 70, 70, 76]
+            var contextX = innerX
+            for (index, button) in contextButtons.enumerated() {
+                let width = min(contextWidths[index], max(0, innerWidth / CGFloat(contextButtons.count)))
+                button.frame = CGRect(x: contextX, y: contextY, width: width, height: 28)
+                contextX += width + 4
+            }
+        }
+
         let historyX = colorX + colorGroupWidth + gap
         undoButton.frame = CGRect(x: historyX, y: topY + 2, width: historyGroupWidth / 2, height: 26)
         redoButton.frame = CGRect(x: historyX + historyGroupWidth / 2, y: topY + 2, width: historyGroupWidth / 2, height: 26)
@@ -1130,6 +1231,7 @@ final class RegionSelectionView: NSView {
             button.layer?.backgroundColor = NSColor.white.withAlphaComponent(button.isEnabled ? 0.08 : 0.03).cgColor
         }
         updateDimensionFeedbackStyle()
+        updateAnnotationContextControls()
     }
 
     private func style(_ button: NSButton, selected: Bool, prominent: Bool = false) {
@@ -1138,6 +1240,174 @@ final class RegionSelectionView: NSView {
             : NSColor.white.withAlphaComponent(0.06).cgColor
         button.layer?.borderWidth = selected ? 0 : 1
         button.layer?.borderColor = NSColor.white.withAlphaComponent(0.08).cgColor
+    }
+
+    private func updateAnnotationContextControls() {
+        let indices = selectedAnnotationIndices.filter { annotations.indices.contains($0) }
+        annotationContextViews.forEach { $0.isHidden = indices.isEmpty }
+        guard !indices.isEmpty else { return }
+        let selected = indices.compactMap { annotations.indices.contains($0) ? annotations[$0] : nil }
+        let primary = selected.first
+        if let primary {
+            setContextButtonTitle(lineWidthButton, title: "线宽 \(Int(primary.lineWidth.rounded()))")
+            setContextButtonTitle(fontSizeButton, title: "字号 \(Int(primary.fontSize.rounded()))")
+        }
+        let canChangeLineWidth = selected.contains { [.pen, .line, .arrow, .rectangle, .highlight].contains($0.tool) }
+        let canChangeFontSize = selected.contains { [.number, .letter, .text].contains($0.tool) }
+        lineWidthButton.isEnabled = canChangeLineWidth
+        fontSizeButton.isEnabled = canChangeFontSize
+        duplicateAnnotationButton.isEnabled = true
+        bringForwardButton.isEnabled = true
+        sendBackwardButton.isEnabled = true
+        alignAnnotationButton.isEnabled = indices.count >= 2
+    }
+
+    private func setContextButtonTitle(_ button: NSButton, title: String) {
+        button.attributedTitle = NSAttributedString(string: title, attributes: [
+            .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+            .foregroundColor: NSColor.white
+        ])
+        button.needsDisplay = true
+    }
+
+    @objc private func showLineWidthMenu(_ sender: NSButton) {
+        let menu = NSMenu(title: "线宽")
+        let selected = selectedAnnotationIndices.filter { annotations.indices.contains($0) }
+        for value in [1, 2, 4, 6, 8] {
+            let item = NSMenuItem(title: "\(value) px", action: #selector(applyLineWidth(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = value
+            item.state = selected.contains { annotations[$0].lineWidth == CGFloat(value) } ? .on : .off
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: CGPoint(x: 0, y: sender.bounds.height + 4), in: sender)
+    }
+
+    @objc private func applyLineWidth(_ sender: NSMenuItem) {
+        let value = CGFloat(sender.tag)
+        let indices = selectedAnnotationIndices
+        guard !indices.isEmpty else { return }
+        registerAnnotationChange()
+        annotationLineWidth = value
+        annotations = annotations.enumerated().map { index, annotation in
+            indices.contains(index) ? replacing(annotation, lineWidth: value) : annotation
+        }
+        updateToolbarControlStyles()
+        needsDisplay = true
+    }
+
+    @objc private func showFontSizeMenu(_ sender: NSButton) {
+        let menu = NSMenu(title: "字号")
+        let selected = selectedAnnotationIndices.filter { annotations.indices.contains($0) }
+        for value in [12, 14, 16, 18, 22, 28, 36] {
+            let item = NSMenuItem(title: "\(value) pt", action: #selector(applyFontSize(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = value
+            item.state = selected.contains { annotations[$0].fontSize == CGFloat(value) } ? .on : .off
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: CGPoint(x: 0, y: sender.bounds.height + 4), in: sender)
+    }
+
+    @objc private func applyFontSize(_ sender: NSMenuItem) {
+        let value = CGFloat(sender.tag)
+        let indices = selectedAnnotationIndices
+        guard !indices.isEmpty else { return }
+        registerAnnotationChange()
+        annotationFontSize = value
+        annotations = annotations.enumerated().map { index, annotation in
+            indices.contains(index) ? replacing(annotation, fontSize: value) : annotation
+        }
+        updateToolbarControlStyles()
+        needsDisplay = true
+    }
+
+    @objc private func duplicateSelectedAnnotations() {
+        let indices = selectedAnnotationIndices.sorted()
+        guard !indices.isEmpty else { return }
+        registerAnnotationChange()
+        let copies = indices.compactMap { annotations.indices.contains($0) ? translated(annotations[$0], dx: 14, dy: -14) : nil }
+        let startIndex = annotations.count
+        annotations.append(contentsOf: copies)
+        setAnnotationSelection(Set(startIndex..<(startIndex + copies.count)))
+        needsDisplay = true
+    }
+
+    @objc private func bringSelectedAnnotationsForward() {
+        reorderSelectedAnnotations(forward: true)
+    }
+
+    @objc private func sendSelectedAnnotationsBackward() {
+        reorderSelectedAnnotations(forward: false)
+    }
+
+    private func reorderSelectedAnnotations(forward: Bool) {
+        var selected = selectedAnnotationIndices
+        guard !selected.isEmpty else { return }
+        registerAnnotationChange()
+        if forward {
+            for index in selected.sorted(by: >) {
+                let target = index + 1
+                guard target < annotations.count, !selected.contains(target) else { continue }
+                annotations.swapAt(index, target)
+                selected.remove(index); selected.insert(target)
+            }
+        } else {
+            for index in selected.sorted() {
+                let target = index - 1
+                guard target >= 0, !selected.contains(target) else { continue }
+                annotations.swapAt(index, target)
+                selected.remove(index); selected.insert(target)
+            }
+        }
+        setAnnotationSelection(selected)
+        needsDisplay = true
+    }
+
+    @objc private func showAlignmentMenu(_ sender: NSButton) {
+        let menu = NSMenu(title: "对齐")
+        let items: [(String, Int)] = [("左对齐", 0), ("水平居中", 1), ("右对齐", 2), ("顶部对齐", 3), ("垂直居中", 4), ("底部对齐", 5)]
+        for (title, tag) in items {
+            let item = NSMenuItem(title: title, action: #selector(applyAlignment(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = tag
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: CGPoint(x: 0, y: sender.bounds.height + 4), in: sender)
+    }
+
+    @objc private func applyAlignment(_ sender: NSMenuItem) {
+        let indices = selectedAnnotationIndices.sorted()
+        guard indices.count >= 2 else { return }
+        let bounds = indices.compactMap { annotations.indices.contains($0) ? annotationBounds(annotations[$0]) : nil }
+        guard let first = bounds.first else { return }
+        let targetX: CGFloat?
+        let targetY: CGFloat?
+        switch sender.tag {
+        case 0: targetX = bounds.map(\.minX).min() ?? first.minX; targetY = nil
+        case 1: targetX = bounds.map(\.midX).reduce(0, +) / CGFloat(bounds.count); targetY = nil
+        case 2: targetX = bounds.map(\.maxX).max() ?? first.maxX; targetY = nil
+        case 3: targetX = nil; targetY = bounds.map(\.maxY).max() ?? first.maxY
+        case 4: targetX = nil; targetY = bounds.map(\.midY).reduce(0, +) / CGFloat(bounds.count)
+        default: targetX = nil; targetY = bounds.map(\.minY).min() ?? first.minY
+        }
+        registerAnnotationChange()
+        annotations = annotations.enumerated().map { index, annotation in
+            guard indices.contains(index) else { return annotation }
+            let current = annotationBounds(annotation)
+            let dx: CGFloat
+            let dy: CGFloat
+            switch sender.tag {
+            case 0: dx = (targetX ?? current.minX) - current.minX; dy = 0
+            case 1: dx = (targetX ?? current.midX) - current.midX; dy = 0
+            case 2: dx = (targetX ?? current.maxX) - current.maxX; dy = 0
+            case 3: dx = 0; dy = (targetY ?? current.maxY) - current.maxY
+            case 4: dx = 0; dy = (targetY ?? current.midY) - current.midY
+            default: dx = 0; dy = (targetY ?? current.minY) - current.minY
+            }
+            return translated(annotation, dx: dx, dy: dy)
+        }
+        needsDisplay = true
     }
 
     private func updateDimensionFeedbackStyle() {
@@ -1224,7 +1494,7 @@ final class RegionSelectionView: NSView {
         guard let tool = toolButtons.first(where: { $0.button === sender })?.tool else { return }
         if !textAnnotationField.isHidden { commitTextAnnotation() }
         activeTool = tool
-        selectedAnnotationIndex = nil
+        setAnnotationSelection([])
         updateToolbarControlStyles()
         needsDisplay = true
     }
@@ -1264,7 +1534,7 @@ final class RegionSelectionView: NSView {
         let text = textAnnotationField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         if !text.isEmpty {
             let attributes: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 18, weight: .semibold),
+                .font: NSFont.systemFont(ofSize: annotationFontSize, weight: .semibold),
                 .foregroundColor: activeColor.color
             ]
             let size = NSAttributedString(string: text, attributes: attributes).size()
@@ -1276,6 +1546,7 @@ final class RegionSelectionView: NSView {
                 text: text,
                 color: activeColor
             ))
+            setAnnotationSelection([annotations.count - 1])
         }
         cancelTextAnnotation()
         needsDisplay = true
@@ -1445,7 +1716,7 @@ final class RegionSelectionView: NSView {
     private func drawAnnotations() {
         for (index, annotation) in annotations.enumerated() {
             annotation.color.color.setStroke(); annotation.color.color.setFill()
-            let path = NSBezierPath(); path.lineWidth = 2
+            let path = NSBezierPath(); path.lineWidth = annotation.lineWidth
             let rect = annotationRect(for: annotation)
             if annotation.tool == .mosaic || annotation.tool == .blur {
                 if let image = previewPrivacyEffect(for: annotation, rect: rect) {
@@ -1456,14 +1727,14 @@ final class RegionSelectionView: NSView {
                 path.stroke()
             } else if annotation.tool == .highlight {
                 annotation.color.color.withAlphaComponent(0.32).setStroke()
-                path.lineWidth = 14
+                path.lineWidth = max(10, annotationLineWidth * 4)
                 path.lineCapStyle = .round
                 path.move(to: annotation.start)
                 path.line(to: annotation.end)
                 path.stroke()
             } else if annotation.tool == .text, let text = annotation.text {
                 let title = NSAttributedString(string: text, attributes: [
-                    .font: NSFont.systemFont(ofSize: 18, weight: .semibold),
+                    .font: NSFont.systemFont(ofSize: annotation.fontSize, weight: .semibold),
                     .foregroundColor: annotation.color.color
                 ])
                 title.draw(at: annotation.start)
@@ -1479,14 +1750,14 @@ final class RegionSelectionView: NSView {
             } else if (annotation.tool == .number || annotation.tool == .letter), let text = annotation.text {
                 let rect = CGRect(x: annotation.start.x - 14, y: annotation.start.y - 14, width: 28, height: 28)
                 NSBezierPath(ovalIn: rect).fill()
-                let title = NSAttributedString(string: text, attributes: [.font: NSFont.boldSystemFont(ofSize: 13), .foregroundColor: NSColor.white])
+                let title = NSAttributedString(string: text, attributes: [.font: NSFont.boldSystemFont(ofSize: annotation.fontSize), .foregroundColor: NSColor.white])
                 let size = title.size()
                 title.draw(at: CGPoint(x: annotation.start.x - size.width / 2, y: annotation.start.y - size.height / 2))
             }
-            if index == selectedAnnotationIndex { drawSelectionOutline(for: annotation) }
+            if selectedAnnotationIndices.contains(index) { drawSelectionOutline(for: annotation) }
         }
         if let start = annotationStart, let end = annotationCurrent {
-            activeColor.color.setStroke(); let path = NSBezierPath(); path.lineWidth = 2
+            activeColor.color.setStroke(); let path = NSBezierPath(); path.lineWidth = annotationLineWidth
             if activeTool == .rectangle {
                 path.appendRect(CGRect(x: min(start.x, end.x), y: min(start.y, end.y), width: abs(end.x - start.x), height: abs(end.y - start.y)))
             } else if activeTool == .mosaic || activeTool == .blur {
@@ -1505,7 +1776,7 @@ final class RegionSelectionView: NSView {
                 path.appendRect(rect)
             } else if activeTool == .highlight {
                 activeColor.color.withAlphaComponent(0.32).setStroke()
-                path.lineWidth = 14
+                path.lineWidth = max(10, annotationLineWidth * 4)
                 path.lineCapStyle = .round
                 path.move(to: start); path.line(to: end)
             } else if activeTool == .pen, let first = penPoints.first {
@@ -1577,11 +1848,13 @@ final class RegionSelectionView: NSView {
     }
 
     private func deleteSelectedAnnotation() {
-        let index = selectedAnnotationIndex ?? annotations.indices.last
-        guard let index, annotations.indices.contains(index) else { return }
+        let indices = selectedAnnotationIndices.isEmpty ? Set(annotations.indices.suffix(1)) : selectedAnnotationIndices
+        guard !indices.isEmpty else { return }
         registerAnnotationChange()
-        annotations.remove(at: index)
-        selectedAnnotationIndex = nil
+        for index in indices.sorted(by: >) where annotations.indices.contains(index) {
+            annotations.remove(at: index)
+        }
+        setAnnotationSelection([])
         renumberLabels()
         updateToolbarControlStyles()
         needsDisplay = true
@@ -1625,8 +1898,41 @@ final class RegionSelectionView: NSView {
             text: annotation.text,
             color: annotation.color,
             points: annotation.points.map { $0.applying(transform) },
-            privacySeed: annotation.privacySeed
+            privacySeed: annotation.privacySeed,
+            lineWidth: annotation.lineWidth,
+            fontSize: annotation.fontSize
         )
+    }
+
+    private func replacing(_ annotation: Annotation, text: String? = nil, lineWidth: CGFloat? = nil, fontSize: CGFloat? = nil) -> Annotation {
+        Annotation(
+            tool: annotation.tool,
+            start: annotation.start,
+            end: annotation.end,
+            text: text ?? annotation.text,
+            color: annotation.color,
+            points: annotation.points,
+            privacySeed: annotation.privacySeed,
+            lineWidth: lineWidth ?? annotation.lineWidth,
+            fontSize: fontSize ?? annotation.fontSize
+        )
+    }
+
+    private func annotationBounds(_ annotation: Annotation) -> CGRect {
+        if annotation.tool == .pen, let first = annotation.points.first {
+            let xs = annotation.points.map(\.x)
+            let ys = annotation.points.map(\.y)
+            return CGRect(
+                x: xs.min() ?? first.x,
+                y: ys.min() ?? first.y,
+                width: (xs.max() ?? first.x) - (xs.min() ?? first.x),
+                height: (ys.max() ?? first.y) - (ys.min() ?? first.y)
+            )
+        }
+        if annotation.tool == .number || annotation.tool == .letter {
+            return CGRect(x: annotation.start.x - 14, y: annotation.start.y - 14, width: 28, height: 28)
+        }
+        return annotationRect(for: annotation)
     }
 
     private func registerAnnotationChange() {
@@ -1640,7 +1946,7 @@ final class RegionSelectionView: NSView {
         guard let previous = undoStack.popLast() else { return }
         redoStack.append(annotations)
         annotations = previous
-        selectedAnnotationIndex = nil
+        setAnnotationSelection([])
         updateToolbarControlStyles()
         needsDisplay = true
     }
@@ -1649,7 +1955,7 @@ final class RegionSelectionView: NSView {
         guard let next = redoStack.popLast() else { return }
         undoStack.append(annotations)
         annotations = next
-        selectedAnnotationIndex = nil
+        setAnnotationSelection([])
         updateToolbarControlStyles()
         needsDisplay = true
     }
@@ -1661,10 +1967,10 @@ final class RegionSelectionView: NSView {
             guard annotation.tool == .number || annotation.tool == .letter else { return annotation }
             if annotation.tool == .number {
                 number += 1
-                return Annotation(tool: annotation.tool, start: annotation.start, end: annotation.end, text: "\(number)", color: annotation.color)
+                return replacing(annotation, text: "\(number)", fontSize: annotation.fontSize)
             }
             letter += 1
-            return Annotation(tool: annotation.tool, start: annotation.start, end: annotation.end, text: alphabeticLabel(for: letter), color: annotation.color)
+            return replacing(annotation, text: alphabeticLabel(for: letter), fontSize: annotation.fontSize)
         }
     }
 
