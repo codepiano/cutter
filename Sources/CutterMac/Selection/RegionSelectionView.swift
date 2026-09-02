@@ -934,12 +934,16 @@ final class RegionSelectionView: NSView {
         addSubview(customColorWell)
         prepareColorPanel()
 
-        let outputs: [(CaptureSettings.Output, String)] = [(.copy, "复制"), (.save, "存储"), (.copyAndSave, "复制并存储")]
+        let outputs: [(CaptureSettings.Output, String)] = [
+            (.copy, "复制"), (.save, "存储"), (.copyAndSave, "复制并存储"), (.pin, "临时贴图")
+        ]
         for (output, title) in outputs {
             let button = makeToolbarButton(title: title, fontSize: 12)
             button.target = self
             button.action = #selector(performOutput(_:))
-            button.toolTip = output == defaultOutput ? "默认动作，按 Return 执行" : title
+            button.toolTip = output == .pin
+                ? "临时显示截图，不写入文件；关闭窗口后移除"
+                : (output == defaultOutput ? "默认动作，按 Return 执行" : title)
             outputButtons.append((output, button))
         }
 
@@ -1197,7 +1201,7 @@ final class RegionSelectionView: NSView {
 
         let actionX = innerX + 360
         let actionWidth = max(0, innerWidth - 360)
-        let actionWeights: [CGFloat] = [0.20, 0.20, 0.36, 0.24]
+        let actionWeights: [CGFloat] = [0.16, 0.16, 0.30, 0.18, 0.20]
         var nextActionX = actionX
         let actionButtons = outputButtons.map(\.button) + [cancelButton]
         for (index, button) in actionButtons.enumerated() {

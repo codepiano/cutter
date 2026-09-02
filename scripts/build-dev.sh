@@ -11,6 +11,7 @@ swiftc \
   -parse-as-library \
   "$project_dir/Sources/CutterMac/CutterMain.swift" \
   "$project_dir/Sources/CutterMac/Application/AppDelegate.swift" \
+  "$project_dir/Sources/CutterMac/Application/PinnedImageWindowController.swift" \
   "$project_dir/Sources/CutterMac/Capture/ScreenCaptureBackend.swift" \
   "$project_dir/Sources/CutterMac/Capture/ScreenCaptureKitBackend.swift" \
   "$project_dir/Sources/CutterMac/Capture/CaptureSettings.swift" \

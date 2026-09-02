@@ -16,6 +16,7 @@ struct CaptureSettings {
         case copy
         case save
         case copyAndSave
+        case pin
     }
 
     enum Delay: Int, CaseIterable {

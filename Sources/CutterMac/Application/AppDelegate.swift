@@ -8,10 +8,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var selectionController: RegionSelectionController?
     private var countdownController: CaptureCountdownController?
     private var captureTask: Task<Void, Never>?
+    private var pinnedWindows: [PinnedImageWindowController] = []
     private var captureSettings = CaptureSettings.current
     private var includeCursorItem: NSMenuItem?
     private var captureItem: NSMenuItem?
     private var delayItems: [Int: NSMenuItem] = [:]
+    private var closeAllPinsItem: NSMenuItem?
     private var isCapturing = false
 
     override init() {
@@ -92,6 +94,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             keyEquivalent: ""
         )
         permissionItem.target = self
+
+        let closePinsItem = menu.addItem(
+            withTitle: "关闭所有临时贴图",
+            action: #selector(closeAllPinnedImages),
+            keyEquivalent: ""
+        )
+        closePinsItem.target = self
+        closePinsItem.isEnabled = false
+        closeAllPinsItem = closePinsItem
 
         menu.addItem(.separator())
         let quitItem = menu.addItem(
@@ -189,6 +200,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 result.image,
                 to: captureSettings.downloadDirectory
             )
+        case .pin:
+            showPinnedImage(result.image, scaleFactor: workspace.display.scaleFactor)
         }
         showStatusFeedback(for: result.output)
     }
@@ -227,6 +240,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         captureItem?.title = "开始截图    ⌥⌘2"
     }
 
+    private func showPinnedImage(_ image: CGImage, scaleFactor: CGFloat) {
+        let controller = PinnedImageWindowController(image: image, scaleFactor: scaleFactor)
+        controller.onClose = { [weak self, weak controller] in
+            guard let self, let controller else { return }
+            self.pinnedWindows.removeAll { $0 === controller }
+            self.closeAllPinsItem?.isEnabled = !self.pinnedWindows.isEmpty
+        }
+        pinnedWindows.append(controller)
+        closeAllPinsItem?.isEnabled = true
+        controller.show()
+    }
+
+    @objc private func closeAllPinnedImages() {
+        pinnedWindows.forEach { $0.close() }
+        pinnedWindows.removeAll()
+        closeAllPinsItem?.isEnabled = false
+    }
+
     @objc private func checkPermission() {
         if ScreenCapturePermission.isGranted {
             let alert = NSAlert()
@@ -247,6 +278,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .copy: description = "截图已复制"
         case .save: description = "截图已存储"
         case .copyAndSave: description = "截图已复制并存储"
+        case .pin: description = "临时贴图已打开"
         }
         statusItem?.button?.image = NSImage(
             systemSymbolName: "checkmark",
