@@ -35,7 +35,10 @@ ImageClipboard               ImageFileWriter
 - 调度立即或延时截图；倒计时期间再次触发快捷键会取消任务。
 - 串联捕获、选区和输出流程。
 - 持久化上次使用的输出动作。
-- 根据复制、存储或复制并存储显示准确的完成反馈。
+- 根据复制、存储、复制并存储或临时贴图显示准确的完成反馈。
+- 持有临时贴图控制器，关闭窗口时释放，并提供关闭所有临时贴图的菜单动作。
+
+`PinnedImageWindowController` 使用浮动 `NSPanel` 显示图像；图像只保留在内存，不自动写入文件。
 
 ### `Capture`
 
@@ -69,6 +72,27 @@ ImageClipboard               ImageFileWriter
 - `ScreenCapturePermission`：查询和申请屏幕录制权限。
 - `ImageClipboard`：将图像发布到 macOS 剪贴板。
 - `GlobalShortcutService`：注册和释放全局快捷键。
+
+### 滚动截图
+
+滚动截图沿用区域选择的入口和最终 `(image, output)` 返回路径，通过单独的滚动选区回调启动实时采样，不扩充 `CaptureSettings.Output`。
+
+```text
+RegionSelectionView.onScrollSelection
+    → RegionSelectionController
+        → ScreenCaptureKitRegionSampler（固定区域，排除 Cutter）
+        → ScrollCaptureSession（生命周期和画面稳定检测）
+            → CutterCore.VerticalImageStitcher（重叠匹配、条带、合成）
+        → ScrollCaptureHUDController（状态与动作）
+        → LongImagePreviewController（查看与选择输出）
+    → AppDelegate 既有图像输出路径
+```
+
+`CutterCore` 是不依赖 AppKit 窗口的 SwiftPM 模块，当前用 CoreGraphics 接收与输出图像。它将像素匹配与 macOS 权限、窗口状态分离，并不意味着已经完成 Windows 平台移植。首屏、最新有效帧和新增条带保存在内存；最终完整图像在结束时合成。
+
+冻结选区窗口在实时采样前隐藏，边框点击穿透，控制面板不抢原应用的滚动输入。屏幕的全局位置、显示器局部点坐标与图像物理像素分别在捕获边界转换。会话用失效标记拒绝取消、暂停或撤销前发出的过时工作；完成等待已进入匹配的有效帧结算，取消仍可阻止结果输出。
+
+长图预览使用原生滚动容器，输出复用现有复制、PNG 存储与临时贴图行为。普通截图标注暂未迁到共享核心，因此首版长图不提供标注；后续须抽出统一图像坐标模型再接入。
 
 ## 坐标空间
 
@@ -117,12 +141,16 @@ AppKit 选区点数
 
 这些设置只描述本机截图行为，不包含截图图像本身。
 
+滚动会话也只保留内存图像，不新增持久设置或截图历史。
+
 ## 构建路径
 
 仓库保留两条构建路径：
 
 1. `swift build`：由 SwiftPM 自动发现 `Sources/CutterMac` 下的源文件。
 2. `scripts/build-dev.sh`：直接调用 `swiftc`，源文件列表必须显式维护。
+
+直接编译脚本先编译 `CutterCore` 模块与对象文件，再将其链接到 `CutterMac`。滚动截图有三条独立回归命令：`scripts/test-scroll-stitcher.sh`（像素匹配与上限）、`scripts/test-scroll-session.sh`（异步生命周期）、`scripts/test-scroll-ui.sh`（原生窗口行为）。这些脚本使用合成图像，不等同于真实桌面捕获验收。
 
 `scripts/build-app.sh` 先调用 `build-dev.sh`，再把可执行文件放入 `.build/Cutter.app` 并使用本机开发身份签名。新增 Swift 文件时，应同时验证 SwiftPM、直接编译和 `.app` 打包三条路径。
 
@@ -134,8 +162,8 @@ AppKit 选区点数
 
 ## 当前未实现
 
-- 窗口截图和全屏截图。
+- 全屏截图。
 - 多显示器同时选择。
-- 贴图置顶。
-- 滚动截图。
 - 屏幕录制和视频编辑。
+
+滚动截图的设计约束与验证记录见 [`SCROLLING_CAPTURE.md`](SCROLLING_CAPTURE.md)。

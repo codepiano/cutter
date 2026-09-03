@@ -5,6 +5,7 @@ import CoreGraphics
 @MainActor
 final class RegionSelectionView: NSView {
     var onSelection: ((CGImage, CaptureSettings.Output) -> Void)?
+    var onScrollSelection: ((CGRect) -> Void)?
     var onCancel: (() -> Void)?
 
     private let capture: CapturedImage
@@ -73,6 +74,7 @@ final class RegionSelectionView: NSView {
     private var originalColorPanelShowsAlpha: Bool?
     private var outputButtons: [(output: CaptureSettings.Output, button: NSButton)] = []
     private let cancelButton = NSButton()
+    private let scrollCaptureButton = NSButton()
     private let undoButton = NSButton()
     private let redoButton = NSButton()
 
@@ -947,6 +949,12 @@ final class RegionSelectionView: NSView {
             outputButtons.append((output, button))
         }
 
+        configureTextButton(scrollCaptureButton, title: "滚动截图", fontSize: 12)
+        scrollCaptureButton.target = self
+        scrollCaptureButton.action = #selector(beginScrollCapture(_:))
+        scrollCaptureButton.setAccessibilityLabel("滚动截图")
+        addSubview(scrollCaptureButton)
+
         configureIconButton(undoButton, symbol: "arrow.uturn.backward", label: "撤销", action: #selector(undoFromToolbar))
         undoButton.toolTip = "撤销（⌘Z）"
         configureIconButton(redoButton, symbol: "arrow.uturn.forward", label: "重做", action: #selector(redoFromToolbar))
@@ -1092,7 +1100,7 @@ final class RegionSelectionView: NSView {
         views.append(contentsOf: colorButtons.map { $0.button })
         views.append(customColorWell)
         views.append(contentsOf: outputButtons.map { $0.button })
-        views.append(contentsOf: [cancelButton, undoButton, redoButton, dimensionApplyButton, presetButton, dimensionLabel, pixelLabel])
+        views.append(contentsOf: [scrollCaptureButton, cancelButton, undoButton, redoButton, dimensionApplyButton, presetButton, dimensionLabel, pixelLabel])
         views.append(contentsOf: annotationContextViews)
         return views
     }
@@ -1201,9 +1209,9 @@ final class RegionSelectionView: NSView {
 
         let actionX = innerX + 360
         let actionWidth = max(0, innerWidth - 360)
-        let actionWeights: [CGFloat] = [0.16, 0.16, 0.30, 0.18, 0.20]
+        let actionWeights: [CGFloat] = [0.16, 0.16, 0.16, 0.30, 0.18, 0.10]
         var nextActionX = actionX
-        let actionButtons = outputButtons.map(\.button) + [cancelButton]
+        let actionButtons = [scrollCaptureButton] + outputButtons.map(\.button) + [cancelButton]
         for (index, button) in actionButtons.enumerated() {
             let width = actionWidth * actionWeights[index]
             button.frame = CGRect(x: nextActionX, y: bottomY, width: width, height: 30)
@@ -1226,6 +1234,25 @@ final class RegionSelectionView: NSView {
         for item in outputButtons {
             style(item.button, selected: item.output == defaultOutput, prominent: item.output == defaultOutput)
         }
+        let scrollReason: String?
+        if isCompleting {
+            scrollReason = "正在完成截图"
+        } else if pendingTextPoint != nil {
+            scrollReason = "请先完成或取消文本标注"
+        } else if shape != .rectangle {
+            scrollReason = "请使用矩形选区"
+        } else if !annotations.isEmpty {
+            scrollReason = "请先撤销标注，再开始滚动截图"
+        } else if let selection = selectionRect, selection.width < 120 || selection.height < 120 {
+            scrollReason = "请扩大选区至至少 120 × 120 pt"
+        } else if selectionRect == nil {
+            scrollReason = "请先完成矩形选区"
+        } else {
+            scrollReason = nil
+        }
+        scrollCaptureButton.isEnabled = scrollReason == nil
+        scrollCaptureButton.toolTip = scrollReason ?? "捕获选区并手动滚动拼接长图"
+        style(scrollCaptureButton, selected: false, prominent: false)
         style(cancelButton, selected: false)
         style(presetButton, selected: false)
         undoButton.isEnabled = !undoStack.isEmpty
@@ -1566,6 +1593,15 @@ final class RegionSelectionView: NSView {
     @objc private func performOutput(_ sender: NSButton) {
         guard let output = outputButtons.first(where: { $0.button === sender })?.output else { return }
         complete(output: output)
+    }
+
+    @objc private func beginScrollCapture(_ sender: NSButton) {
+        guard sender.isEnabled, !isCompleting, pendingTextPoint == nil, shape == .rectangle, annotations.isEmpty,
+              let selection = selectionRect, selection.width >= 120, selection.height >= 120 else {
+            NSSound.beep()
+            return
+        }
+        onScrollSelection?(selection.integral)
     }
 
     @objc private func showSizePresetMenu(_ sender: NSButton) {

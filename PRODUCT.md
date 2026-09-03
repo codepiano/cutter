@@ -19,7 +19,7 @@ The app runs quietly from the macOS menu bar. Capture, selection overlays, permi
 ## Capabilities and Constraints
 
 - First platform: macOS.
-- Current capture modes: smart normal-window selection and free region selection on the primary display; Space toggles window recognition before selection.
+- Current capture modes: smart normal-window selection, free region selection, and manually scrolled vertical capture with automatic overlap stitching on the primary display; Space toggles window recognition before selection.
 - Current editing: rectangle, square, circle, and transparent perforated stamp selections; precise pixel dimensions; persistent built-in and custom size presets; pen, line, arrow, numeric-label, letter-label, rectangle, text, highlight, random-content mosaic, and random-content blur annotations with quick and arbitrary system colors; multi-selection, duplication, z-order, alignment, line-width, and font-size editing; undo and redo.
 - Current outputs: copy, save to the local Pictures directory, copy and save, or open a temporary floating pin without file persistence.
 - Capture scheduling: immediate, 3-second, 5-second, or 10-second delay with a cancellable native countdown HUD.
@@ -27,7 +27,8 @@ The app runs quietly from the macOS menu bar. Capture, selection overlays, permi
 - Native platform code owns screen capture, coordinate conversion, permissions, shortcuts, clipboard behavior, and window management.
 - The reusable core will own image transforms, annotation data, undo/redo, export rules, and later scrolling-image stitching.
 - No accounts, network upload, cloud synchronization, screen recording, or video processing.
-- Full-screen capture, multi-display selection, and scrolling capture are not implemented yet.
+- Scrolling capture supports pause/resume, undoing the last segment, bounded in-memory stitching, and a scrollable long-image preview with existing outputs. Long-image annotations, automatic scrolling, and automatic removal of sticky headers are outside the first release.
+- Full-screen capture and multi-display selection are not implemented yet.
 
 ## Product Principles
 
@@ -39,7 +40,5 @@ The app runs quietly from the macOS menu bar. Capture, selection overlays, permi
 
 ## Open Decisions
 
-- Whether scrolling capture belongs in version 1.0.
-- Whether pinning belongs in version 1.0.
 - Windows implementation schedule.
 - Distribution channel and signing strategy.

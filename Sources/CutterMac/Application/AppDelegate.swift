@@ -36,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         captureTask?.cancel()
         countdownController?.cancel()
+        selectionController?.cancel()
         shortcutService.unregister()
     }
 
@@ -178,6 +179,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             windows: workspace.windows,
             windowCaptureProvider: { windowID in
                 try await backend.captureWindow(id: windowID, includeCursor: includeCursor)
+            },
+            scrollSamplerProvider: { displayID, region in
+                try await backend.prepareScrollSampler(
+                    displayID: displayID,
+                    region: region,
+                    includeCursor: false
+                )
             }
         ) else {
             selectionController = nil

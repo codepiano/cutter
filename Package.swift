@@ -11,8 +11,13 @@ let package = Package(
         .executable(name: "CutterMac", targets: ["CutterMac"])
     ],
     targets: [
+        .target(
+            name: "CutterCore",
+            path: "Sources/CutterCore"
+        ),
         .executableTarget(
             name: "CutterMac",
+            dependencies: ["CutterCore"],
             path: "Sources/CutterMac"
         )
     ]
