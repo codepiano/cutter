@@ -77,6 +77,7 @@ final class RegionSelectionView: NSView {
     private let scrollCaptureButton = NSButton()
     private let undoButton = NSButton()
     private let redoButton = NSButton()
+    private var toolbarSeparators: [(CGPoint, CGPoint)] = []
 
     private enum Handle {
         case topLeft, top, topRight, left, right, bottomLeft, bottom, bottomRight
@@ -164,6 +165,7 @@ final class RegionSelectionView: NSView {
         self.captureWindows = captureWindows
         self.windowCaptureProvider = windowCaptureProvider
         super.init(frame: frameRect)
+        appearance = NSAppearance(named: .darkAqua)
         windowSelectionEnabled = !captureWindows.isEmpty
         configureDimensionFields()
         configureTextAnnotationField()
@@ -832,34 +834,43 @@ final class RegionSelectionView: NSView {
         attributed.draw(at: origin)
     }
 
+    private var toolbarUsesExtraRow: Bool { bounds.width - 16 < 900 }
+    private var toolbarSeparatesPalette: Bool { bounds.width - 16 < 700 }
+
+    private func dimensionRowY(in toolbar: CGRect) -> CGFloat {
+        toolbarUsesExtraRow ? toolbar.maxY - 88 : toolbar.minY + 12
+    }
+
     private func drawToolbar(for selection: CGRect) {
         let toolbar = toolbarRect(for: selection)
-        NSColor.black.withAlphaComponent(0.92).setFill()
-        NSBezierPath(roundedRect: toolbar, xRadius: 12, yRadius: 12).fill()
-
-        NSColor.white.withAlphaComponent(0.035).setFill()
-        NSBezierPath(
-            roundedRect: CGRect(x: toolbar.minX + 4, y: toolbar.maxY - 40, width: toolbar.width - 8, height: 36),
-            xRadius: 8,
-            yRadius: 8
-        ).fill()
-
-        NSColor.white.withAlphaComponent(0.12).setStroke()
-        let separatorOffsets: [CGFloat] = selectedAnnotationIndices.isEmpty ? [42] : [42, 78]
-        for offset in separatorOffsets {
-            let separator = NSBezierPath()
-            separator.move(to: CGPoint(x: toolbar.minX + 8, y: toolbar.minY + offset))
-            separator.line(to: CGPoint(x: toolbar.maxX - 8, y: toolbar.minY + offset))
-            separator.lineWidth = 1
-            separator.stroke()
+        NSColor(calibratedWhite: 0.10, alpha: 0.97).setFill()
+        let panel = NSBezierPath(roundedRect: toolbar, xRadius: 14, yRadius: 14)
+        panel.fill()
+        NSColor.white.withAlphaComponent(0.14).setStroke()
+        panel.lineWidth = 1
+        panel.stroke()
+        if let first = shapeButtons.first?.button, let last = shapeButtons.last?.button {
+            NSColor.white.withAlphaComponent(0.04).setFill()
+            NSBezierPath(roundedRect: first.frame.union(last.frame).insetBy(dx: -4, dy: -4),
+                         xRadius: 9, yRadius: 9).fill()
+        }
+        NSColor.white.withAlphaComponent(0.13).setStroke()
+        for separator in toolbarSeparators {
+            let line = NSBezierPath()
+            line.move(to: separator.0)
+            line.line(to: separator.1)
+            line.lineWidth = 1
+            line.stroke()
         }
     }
 
     private func toolbarRect(for selection: CGRect) -> CGRect {
         let inset: CGFloat = 8
         let gap: CGFloat = 8
-        let width = max(0, min(980, bounds.width - inset * 2))
-        let requestedHeight: CGFloat = selectedAnnotationIndices.isEmpty ? 84 : 122
+        let width = max(0, min(940, bounds.width - inset * 2))
+        let requestedHeight: CGFloat = (toolbarUsesExtraRow ? 152 : 108)
+            + (toolbarSeparatesPalette ? 44 : 0)
+            + (selectedAnnotationIndices.isEmpty ? 0 : 44)
         let height = max(0, min(requestedHeight, bounds.height - inset * 2))
         let safeBounds = bounds.insetBy(dx: inset, dy: inset)
         let candidates = [
@@ -890,27 +901,31 @@ final class RegionSelectionView: NSView {
     }
 
     private func configureToolbarControls() {
-        let shapes: [(CaptureSettings.Shape, String)] = [
-            (.rectangle, "矩形"), (.square, "正方形"), (.circle, "圆形"), (.stamp, "邮票")
+        let shapes: [(CaptureSettings.Shape, String, String)] = [
+            (.rectangle, "矩形", "rectangle.dashed"),
+            (.square, "正方形", "square.dashed"),
+            (.circle, "圆形", "circle.dashed"),
+            (.stamp, "邮票", "rectangle")
         ]
-        for (candidate, title) in shapes {
-            let button = makeToolbarButton(title: title, fontSize: 12)
-            button.target = self
-            button.action = #selector(selectShape(_:))
+        for (candidate, title, symbol) in shapes {
+            let button = NSButton()
+            configureIconButton(button, symbol: symbol, label: "\(title)选区", action: #selector(selectShape(_:)))
+            if candidate == .stamp { button.image = stampToolbarImage() }
             button.toolTip = "选择\(title)选区"
             shapeButtons.append((candidate, button))
         }
 
-        let tools: [(AnnotationTool, String, String)] = [
-            (.none, "选择", "V"), (.pen, "画笔", "P"), (.line, "直线", "L"),
-            (.arrow, "箭头", "A"), (.number, "数字", "N"), (.letter, "字母", "T"),
-            (.rectangle, "矩形框", "R"), (.text, "文本", "X"), (.highlight, "高亮", "H"),
-            (.mosaic, "马赛克", "M"), (.blur, "模糊", "B")
+        let tools: [(AnnotationTool, String, String, String)] = [
+            (.none, "选择", "V", "cursorarrow"), (.pen, "画笔", "P", "pencil"),
+            (.line, "直线", "L", "line.diagonal"), (.arrow, "箭头", "A", "arrow.up.right"),
+            (.rectangle, "矩形框", "R", "rectangle"), (.highlight, "高亮", "H", "highlighter"),
+            (.text, "文本", "X", "textformat"), (.number, "数字", "N", "1.circle"),
+            (.letter, "字母", "T", "a.circle"), (.mosaic, "马赛克", "M", "square.grid.3x3.fill"),
+            (.blur, "模糊", "B", "drop.halffull")
         ]
-        for (tool, title, shortcut) in tools {
-            let button = makeToolbarButton(title: title, fontSize: 11)
-            button.target = self
-            button.action = #selector(selectTool(_:))
+        for (tool, title, shortcut, symbol) in tools {
+            let button = NSButton()
+            configureIconButton(button, symbol: symbol, label: title, action: #selector(selectTool(_:)))
             button.toolTip = "\(title)（\(shortcut)）"
             toolButtons.append((tool, button))
         }
@@ -1078,8 +1093,34 @@ final class RegionSelectionView: NSView {
         button.setAccessibilityLabel(title)
     }
 
+    private func stampToolbarImage() -> NSImage {
+        let image = NSImage(size: CGSize(width: 24, height: 24), flipped: false) { _ in
+            NSColor.white.setStroke()
+            let outline = NSBezierPath(rect: CGRect(x: 3, y: 5, width: 18, height: 14))
+            outline.lineWidth = 2
+            outline.stroke()
+            guard let context = NSGraphicsContext.current?.cgContext else { return false }
+            context.setBlendMode(.clear)
+            for x in stride(from: CGFloat(5), through: 19, by: 4) {
+                for y: CGFloat in [5, 19] {
+                    context.fillEllipse(in: CGRect(x: x - 1.1, y: y - 1.1, width: 2.2, height: 2.2))
+                }
+            }
+            for y in stride(from: CGFloat(7), through: 17, by: 4) {
+                for x: CGFloat in [3, 21] {
+                    context.fillEllipse(in: CGRect(x: x - 1.1, y: y - 1.1, width: 2.2, height: 2.2))
+                }
+            }
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }
+
     private func configureIconButton(_ button: NSButton, symbol: String, label: String, action: Selector) {
-        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
+            .withSymbolConfiguration(.init(pointSize: 18, weight: .medium))
+        button.title = ""
         button.imagePosition = .imageOnly
         button.contentTintColor = .white
         button.isBordered = false
@@ -1129,103 +1170,91 @@ final class RegionSelectionView: NSView {
         }
         let toolbar = toolbarRect(for: selection)
         toolbarViews.forEach { $0.isHidden = false }
+        toolbarSeparators.removeAll()
+        let left = toolbar.minX + 12
+        let right = toolbar.maxX - 12
+        let topY = toolbar.maxY - 44
+        let bottomY = toolbar.minY + 12
+        let utilityY = dimensionRowY(in: toolbar)
+        let compact = toolbarUsesExtraRow
 
-        let innerX = toolbar.minX + 6
-        let innerWidth = max(0, toolbar.width - 12)
-        let hasContext = !selectedAnnotationIndices.isEmpty
-        let topY = toolbar.maxY - 37
-        let topHeight: CGFloat = 30
-        let gap: CGFloat = 8
+        func divider(at x: CGFloat, y: CGFloat) {
+            toolbarSeparators.append((CGPoint(x: x, y: y + 7), CGPoint(x: x, y: y + 25)))
+        }
+        func rowDivider(at y: CGFloat) {
+            toolbarSeparators.append((CGPoint(x: left, y: y), CGPoint(x: right, y: y)))
+        }
 
-        let shapeGroupWidth = min(190, innerWidth * 0.27)
-        let colorGroupWidth = min(180, innerWidth * 0.25)
-        let historyGroupWidth: CGFloat = min(60, innerWidth * 0.10)
-        let toolGroupWidth = max(
-            0,
-            innerWidth - shapeGroupWidth - colorGroupWidth - historyGroupWidth - gap * 3
-        )
-
-        let shapeWidth = shapeGroupWidth / CGFloat(shapeButtons.count)
         for (index, item) in shapeButtons.enumerated() {
-            item.button.frame = CGRect(
-                x: innerX + CGFloat(index) * shapeWidth,
-                y: topY,
-                width: shapeWidth,
-                height: topHeight
-            )
+            item.button.frame = CGRect(x: left + CGFloat(index) * 36, y: topY, width: 32, height: 32)
         }
-
-        let toolX = innerX + shapeGroupWidth + gap
-        let toolButtonWidth = toolGroupWidth / CGFloat(toolButtons.count)
+        divider(at: left + 152, y: topY)
+        var toolX = left + 164
         for (index, item) in toolButtons.enumerated() {
-            item.button.frame = CGRect(
-                x: toolX + CGFloat(index) * toolButtonWidth,
-                y: topY,
-                width: toolButtonWidth,
-                height: topHeight
-            )
-        }
-
-        let colorX = toolX + toolGroupWidth + gap
-        let colorWellWidth = min(42, colorGroupWidth * 0.25)
-        let swatchGroupWidth = max(0, colorGroupWidth - colorWellWidth - 6)
-        let colorWidth = swatchGroupWidth / CGFloat(colorButtons.count)
-        for (index, item) in colorButtons.enumerated() {
-            item.button.frame = CGRect(
-                x: colorX + CGFloat(index) * colorWidth + 2,
-                y: topY + 3,
-                width: max(18, colorWidth - 4),
-                height: 24
-            )
-        }
-        customColorWell.frame = CGRect(
-            x: colorX + swatchGroupWidth + 6,
-            y: topY + 1,
-            width: colorWellWidth,
-            height: 28
-        )
-
-        let contextY = toolbar.minY + 46
-        let contextButtons = annotationContextViews.compactMap { $0 as? NSButton }
-        if hasContext {
-            let contextWidths: [CGFloat] = [116, 116, 70, 70, 70, 76]
-            var contextX = innerX
-            for (index, button) in contextButtons.enumerated() {
-                let width = min(contextWidths[index], max(0, innerWidth / CGFloat(contextButtons.count)))
-                button.frame = CGRect(x: contextX, y: contextY, width: width, height: 28)
-                contextX += width + 4
+            if index == 6 || index == 9 {
+                divider(at: toolX + 2, y: topY)
+                toolX += 12
             }
+            item.button.frame = CGRect(x: toolX, y: topY, width: 32, height: 32)
+            toolX += 36
         }
 
-        let historyX = colorX + colorGroupWidth + gap
-        undoButton.frame = CGRect(x: historyX, y: topY + 2, width: historyGroupWidth / 2, height: 26)
-        redoButton.frame = CGRect(x: historyX + historyGroupWidth / 2, y: topY + 2, width: historyGroupWidth / 2, height: 26)
+        let paletteY = compact ? utilityY - (toolbarSeparatesPalette ? 44 : 0) : topY
+        let historyY = paletteY
+        undoButton.frame = CGRect(x: right - 64, y: historyY, width: 30, height: 32)
+        redoButton.frame = CGRect(x: right - 30, y: historyY, width: 30, height: 32)
+        let paletteWidth: CGFloat = compact ? 180 : 198
+        let colorX = right - 64 - 20 - paletteWidth
+        let colorY = paletteY
+        let swatchSize: CGFloat = compact ? 18 : 22
+        for (index, item) in colorButtons.enumerated() {
+            item.button.frame = CGRect(x: colorX + CGFloat(index) * (swatchSize + 4),
+                                       y: colorY + (32 - swatchSize) / 2, width: swatchSize, height: swatchSize)
+        }
+        customColorWell.frame = CGRect(x: colorX + paletteWidth - 64, y: colorY + 2, width: 64, height: 28)
+        divider(at: colorX - 12, y: colorY)
+        divider(at: right - 74, y: colorY)
 
-        let bottomY = toolbar.minY + 6
-        dimensionLabel.frame = CGRect(x: innerX + 2, y: bottomY + 5, width: 30, height: 20)
-        pixelLabel.frame = CGRect(x: innerX + 188, y: bottomY + 5, width: 20, height: 20)
-        dimensionApplyButton.frame = CGRect(x: innerX + 214, y: bottomY, width: 56, height: 30)
-        presetButton.frame = CGRect(x: innerX + 278, y: bottomY, width: 74, height: 30)
+        if !selectedAnnotationIndices.isEmpty {
+            let contextWidths: [CGFloat] = [104, 104, 68, 68, 68, 76]
+            var contextX = left
+            for (index, button) in annotationContextViews.compactMap({ $0 as? NSButton }).enumerated() {
+                button.frame = CGRect(x: contextX, y: bottomY + 44, width: contextWidths[index], height: 32)
+                contextX += contextWidths[index] + 8
+            }
+            rowDivider(at: bottomY + 38)
+        }
 
-        let actionX = innerX + 360
-        let actionWidth = max(0, innerWidth - 360)
-        let actionWeights: [CGFloat] = [0.16, 0.16, 0.16, 0.30, 0.18, 0.10]
-        var nextActionX = actionX
-        let actionButtons = [scrollCaptureButton] + outputButtons.map(\.button) + [cancelButton]
+        dimensionLabel.frame = CGRect(x: left, y: utilityY + 6, width: 30, height: 20)
+        pixelLabel.frame = CGRect(x: left + 188, y: utilityY + 6, width: 20, height: 20)
+        dimensionApplyButton.frame = CGRect(x: left + 214, y: utilityY, width: 56, height: 32)
+        presetButton.frame = CGRect(x: left + 278, y: utilityY, width: 74, height: 32)
+
+        // Fixed widths plus explicit gaps prevent the outputs from exceeding
+        // their available width as they did with fractional weights.
+        let actionWidths: [CGFloat] = [88, 64, 64, 104, 88, 52]
+        var actionButtons: [NSButton] = [scrollCaptureButton]
+        actionButtons.append(contentsOf: outputButtons.map(\.button))
+        actionButtons.append(cancelButton)
+        let actionWidth = actionWidths.reduce(0, +) + CGFloat(actionWidths.count - 1) * 6 + 10
+        var actionX = right - actionWidth
         for (index, button) in actionButtons.enumerated() {
-            let width = actionWidth * actionWeights[index]
-            button.frame = CGRect(x: nextActionX, y: bottomY, width: width, height: 30)
-            nextActionX += width
+            if index == 1 { actionX += 10 }
+            button.frame = CGRect(x: actionX, y: bottomY, width: actionWidths[index], height: 32)
+            actionX += actionWidths[index] + 6
         }
+        rowDivider(at: toolbar.maxY - 54)
+        if compact { rowDivider(at: toolbar.maxY - 98) }
+        if toolbarSeparatesPalette { rowDivider(at: toolbar.maxY - 142) }
         updateToolbarControlStyles()
     }
 
     private func updateToolbarControlStyles() {
-        for item in shapeButtons { style(item.button, selected: item.shape == shape) }
-        for item in toolButtons { style(item.button, selected: item.tool == activeTool) }
+        for item in shapeButtons { style(item.button, selected: item.shape == shape, quiet: true) }
+        for item in toolButtons { style(item.button, selected: item.tool == activeTool, quiet: true) }
         for item in colorButtons {
             item.button.layer?.backgroundColor = item.color.color.cgColor
-            item.button.layer?.cornerRadius = 6
+            item.button.layer?.cornerRadius = item.button.frame.width / 2
             item.button.layer?.borderWidth = item.color == activeColor ? 2 : 1
             item.button.layer?.borderColor = (item.color == activeColor ? NSColor.white : NSColor.white.withAlphaComponent(0.35)).cgColor
         }
@@ -1265,11 +1294,11 @@ final class RegionSelectionView: NSView {
         updateAnnotationContextControls()
     }
 
-    private func style(_ button: NSButton, selected: Bool, prominent: Bool = false) {
+    private func style(_ button: NSButton, selected: Bool, prominent: Bool = false, quiet: Bool = false) {
         button.layer?.backgroundColor = selected
             ? NSColor.controlAccentColor.withAlphaComponent(prominent ? 1 : 0.82).cgColor
-            : NSColor.white.withAlphaComponent(0.06).cgColor
-        button.layer?.borderWidth = selected ? 0 : 1
+            : NSColor.white.withAlphaComponent(quiet ? 0 : 0.06).cgColor
+        button.layer?.borderWidth = selected || quiet ? 0 : 1
         button.layer?.borderColor = NSColor.white.withAlphaComponent(0.08).cgColor
     }
 
@@ -2172,10 +2201,10 @@ final class RegionSelectionView: NSView {
         let toolbar = toolbarRect(for: selection)
         let fieldWidth: CGFloat = 66
         let fieldHeight: CGFloat = 24
-        let y = toolbar.minY + 9
-        widthField.frame = CGRect(x: toolbar.minX + 38, y: y, width: fieldWidth, height: fieldHeight)
-        dimensionSeparator.frame = CGRect(x: toolbar.minX + 104, y: y, width: 18, height: fieldHeight)
-        heightField.frame = CGRect(x: toolbar.minX + 122, y: y, width: fieldWidth, height: fieldHeight)
+        let y = dimensionRowY(in: toolbar) + 4
+        widthField.frame = CGRect(x: toolbar.minX + 44, y: y, width: fieldWidth, height: fieldHeight)
+        dimensionSeparator.frame = CGRect(x: toolbar.minX + 110, y: y, width: 18, height: fieldHeight)
+        heightField.frame = CGRect(x: toolbar.minX + 128, y: y, width: fieldWidth, height: fieldHeight)
         widthField.isHidden = false
         heightField.isHidden = false
         dimensionSeparator.isHidden = false
