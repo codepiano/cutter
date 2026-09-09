@@ -32,6 +32,22 @@ struct ToolbarLayoutHarness {
             }
             let tools = view.subviews.compactMap { $0 as? NSButton }.filter { $0.imagePosition == .imageOnly }
             precondition(tools.count == 17 && tools.allSatisfy { $0.image != nil }, "All native tool symbols must resolve")
+            var returnedOutput: CaptureSettings.Output?
+            view.onSelection = { _, output in returnedOutput = output }
+            let widthField = view.subviews.compactMap { $0 as? NSTextField }
+                .first { $0.accessibilityLabel() == "宽度（像素）" }!
+            window.makeFirstResponder(widthField)
+            precondition(!view.performKeyEquivalent(with: keyEvent(keyCode: 36, window: window)),
+                         "Return in a dimension field must stay with that field")
+            window.makeFirstResponder(tools.first!)
+            precondition(window.performKeyEquivalent(with: keyEvent(keyCode: 76, window: window)),
+                         "Keypad Enter must execute from a focused tool button")
+            precondition(returnedOutput == .copy, "Enter must execute the remembered default output")
+            returnedOutput = nil
+            window.makeFirstResponder(view)
+            precondition(window.performKeyEquivalent(with: keyEvent(keyCode: 36, window: window)),
+                         "Return must execute when the selection view is focused")
+            precondition(returnedOutput == .copy, "Return must execute the remembered default output")
             let number = tools.first { $0.accessibilityLabel() == "数字" }!
             number.performClick(nil)
             view.mouseDown(with: event(.leftMouseDown, point: CGPoint(x: 300, y: 300), window: window))
@@ -47,6 +63,13 @@ struct ToolbarLayoutHarness {
     private static func event(_ type: NSEvent.EventType, point: CGPoint, window: NSWindow) -> NSEvent {
         NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0,
                           windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+    }
+
+    private static func keyEvent(keyCode: UInt16, window: NSWindow) -> NSEvent {
+        NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                         windowNumber: window.windowNumber, context: nil,
+                         characters: "\r", charactersIgnoringModifiers: "\r",
+                         isARepeat: false, keyCode: keyCode)!
     }
 
     private static func drag(_ view: RegionSelectionView, window: NSWindow, from: CGPoint, to: CGPoint) {

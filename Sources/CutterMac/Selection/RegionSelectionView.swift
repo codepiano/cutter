@@ -504,6 +504,23 @@ final class RegionSelectionView: NSView {
         }
     }
 
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard event.type == .keyDown,
+              event.keyCode == 36 || event.keyCode == 76,
+              !isEditingTextControl else {
+            return super.performKeyEquivalent(with: event)
+        }
+        complete(output: defaultOutput)
+        return true
+    }
+
+    private var isEditingTextControl: Bool {
+        guard let responder = window?.firstResponder else { return false }
+        return [widthField, heightField, textAnnotationField].contains {
+            $0.currentEditor() === responder
+        }
+    }
+
     private var selectionRect: CGRect? {
         if let fixedSelection { return fixedSelection }
         guard let start = dragStart, let current = dragCurrent else { return nil }
