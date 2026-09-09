@@ -4,8 +4,23 @@ import CoreGraphics
 @main
 @MainActor
 struct ToolbarLayoutHarness {
-    static func main() throws {
-        NSApplication.shared.setActivationPolicy(.prohibited)
+    static func main() {
+        NSApplication.shared.setActivationPolicy(.accessory)
+        // Match the real menu-bar app, where capture starts after launch has
+        // completed and an application event loop is already running.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            do {
+                try run()
+                exit(EXIT_SUCCESS)
+            } catch {
+                fputs("Toolbar layout failed: \(error)\n", stderr)
+                exit(EXIT_FAILURE)
+            }
+        }
+        NSApp.run()
+    }
+
+    private static func run() throws {
         let output = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         for (width, height, nearFull) in [(1440, 900, false), (1024, 768, true), (800, 600, false), (640, 600, false)] {
@@ -21,6 +36,12 @@ struct ToolbarLayoutHarness {
             let window = RegionSelectionWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
             window.contentView = view
+            NSApp.activate()
+            window.makeKeyAndOrderFront(nil)
+            window.makeFirstResponder(view)
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            precondition(window.canBecomeKey && window.firstResponder === view,
+                         "Borderless selection overlay must accept keyboard focus")
             let from = nearFull ? CGPoint(x: 10, y: 10) : CGPoint(x: 60, y: 220)
             let to = nearFull ? CGPoint(x: width - 10, y: height - 10) : CGPoint(x: min(width - 40, 560), y: height - 80)
             drag(view, window: window, from: from, to: to)
@@ -55,6 +76,8 @@ struct ToolbarLayoutHarness {
             view.closeAuxiliaryPanels()
             window.close()
         }
+        try "passed\n".write(to: output.appendingPathComponent("key-window-and-return.passed"),
+                             atomically: true, encoding: .utf8)
         print("Toolbar layout passed: 1440/1024/800/640 pt, near-full selection, annotation context, all 17 icons, no overlapping controls")
     }
 

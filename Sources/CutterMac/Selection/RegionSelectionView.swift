@@ -4,6 +4,9 @@ import CoreGraphics
 
 @MainActor
 final class RegionSelectionWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+
     override func sendEvent(_ event: NSEvent) {
         let blockedModifiers: NSEvent.ModifierFlags = [.command, .control, .option]
         if event.type == .keyDown,

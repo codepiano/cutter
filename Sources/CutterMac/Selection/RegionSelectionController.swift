@@ -13,6 +13,7 @@ final class RegionSelectionController {
     private var borderWindow: NSWindow?
     private var cursorPushed = false
     private var captureScreen: NSScreen?
+    private var ownsApplicationFocus = false
 
     func cancel() { finish(with: nil) }
 
@@ -79,6 +80,8 @@ final class RegionSelectionController {
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         window.acceptsMouseMovedEvents = true
         window.contentView = overlay
+        NSApp.activate()
+        ownsApplicationFocus = true
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(overlay)
         NSCursor.crosshair.push()
@@ -94,6 +97,7 @@ final class RegionSelectionController {
         sourceWindow?.ignoresMouseEvents = true
         (sourceWindow?.contentView as? RegionSelectionView)?.closeAuxiliaryPanels()
         sourceWindow?.orderOut(nil)
+        releaseApplicationFocus()
         if cursorPushed { NSCursor.pop(); cursorPushed = false }
         if let screen = sourceWindow?.screen {
             captureScreen = screen
@@ -137,6 +141,8 @@ final class RegionSelectionController {
         preview.onOutput = { [weak self] image, output in self?.finish(with: (image, output)) }
         preview.onClose = { [weak self] in self?.finish(with: nil) }
         scrollPreview = preview
+        NSApp.activate()
+        ownsApplicationFocus = true
         preview.show()
     }
 
@@ -166,9 +172,16 @@ final class RegionSelectionController {
         scrollPreview = nil
         window?.orderOut(nil)
         window = nil
+        releaseApplicationFocus()
         if cursorPushed { NSCursor.pop(); cursorPushed = false }
         scrollTask?.cancel()
         scrollTask = nil
         continuation.resume(returning: result)
+    }
+
+    private func releaseApplicationFocus() {
+        guard ownsApplicationFocus else { return }
+        ownsApplicationFocus = false
+        NSApp.deactivate()
     }
 }
