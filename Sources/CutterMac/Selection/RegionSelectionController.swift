@@ -66,7 +66,7 @@ final class RegionSelectionController {
             self?.startScrollCapture(region: region, displayID: capture.displayID, scaleFactor: capture.scaleFactor, overlay: overlay)
         }
 
-        let window = NSWindow(
+        let window = RegionSelectionWindow(
             contentRect: screen.frame,
             styleMask: .borderless,
             backing: .buffered,

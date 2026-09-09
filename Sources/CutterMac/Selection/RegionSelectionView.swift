@@ -3,6 +3,21 @@ import CoreImage
 import CoreGraphics
 
 @MainActor
+final class RegionSelectionWindow: NSWindow {
+    override func sendEvent(_ event: NSEvent) {
+        let blockedModifiers: NSEvent.ModifierFlags = [.command, .control, .option]
+        if event.type == .keyDown,
+           event.keyCode == 36 || event.keyCode == 76,
+           event.modifierFlags.intersection(blockedModifiers).isEmpty,
+           let selectionView = contentView as? RegionSelectionView,
+           selectionView.performDefaultOutputShortcut() {
+            return
+        }
+        super.sendEvent(event)
+    }
+}
+
+@MainActor
 final class RegionSelectionView: NSView {
     var onSelection: ((CGImage, CaptureSettings.Output) -> Void)?
     var onScrollSelection: ((CGRect) -> Void)?
@@ -483,7 +498,7 @@ final class RegionSelectionView: NSView {
                 onCancel?()
             }
         } else if event.keyCode == 36 || event.keyCode == 76 {
-            complete(output: defaultOutput)
+            _ = performDefaultOutputShortcut()
         } else if event.keyCode == 51 || event.keyCode == 117 {
             deleteSelectedAnnotation()
         } else if modifiers.isEmpty, let key = event.charactersIgnoringModifiers?.lowercased() {
@@ -506,10 +521,14 @@ final class RegionSelectionView: NSView {
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         guard event.type == .keyDown,
-              event.keyCode == 36 || event.keyCode == 76,
-              !isEditingTextControl else {
+              event.keyCode == 36 || event.keyCode == 76 else {
             return super.performKeyEquivalent(with: event)
         }
+        return performDefaultOutputShortcut()
+    }
+
+    func performDefaultOutputShortcut() -> Bool {
+        guard !isEditingTextControl else { return false }
         complete(output: defaultOutput)
         return true
     }

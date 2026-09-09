@@ -18,7 +18,7 @@ struct ToolbarLayoutHarness {
             let view = RegionSelectionView(frame: frame,
                 capture: CapturedImage(image: context.makeImage()!, displayID: CGMainDisplayID(), scaleFactor: 1),
                 defaultOutput: .copy)
-            let window = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
+            let window = RegionSelectionWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
             window.contentView = view
             let from = nearFull ? CGPoint(x: 10, y: 10) : CGPoint(x: 60, y: 220)
@@ -40,13 +40,11 @@ struct ToolbarLayoutHarness {
             precondition(!view.performKeyEquivalent(with: keyEvent(keyCode: 36, window: window)),
                          "Return in a dimension field must stay with that field")
             window.makeFirstResponder(tools.first!)
-            precondition(window.performKeyEquivalent(with: keyEvent(keyCode: 76, window: window)),
-                         "Keypad Enter must execute from a focused tool button")
+            window.sendEvent(keyEvent(keyCode: 76, window: window))
             precondition(returnedOutput == .copy, "Enter must execute the remembered default output")
             returnedOutput = nil
             window.makeFirstResponder(view)
-            precondition(window.performKeyEquivalent(with: keyEvent(keyCode: 36, window: window)),
-                         "Return must execute when the selection view is focused")
+            window.sendEvent(keyEvent(keyCode: 36, window: window))
             precondition(returnedOutput == .copy, "Return must execute the remembered default output")
             let number = tools.first { $0.accessibilityLabel() == "数字" }!
             number.performClick(nil)
