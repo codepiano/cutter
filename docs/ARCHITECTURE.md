@@ -84,6 +84,8 @@ RegionSelectionView.onScrollSelection
         → ScrollCaptureSession（生命周期和画面稳定检测）
             → CutterCore.VerticalImageStitcher（重叠匹配、条带、合成）
         → ScrollCaptureHUDController（状态与动作）
+            → AutomaticScrollPacer（拼接反馈驱动步进、重试与暂停）
+            → AutomaticScrollDriver（权限、固定窗口校验、定向滚轮事件）
         → LongImagePreviewController（查看与选择输出）
     → AppDelegate 既有图像输出路径
 ```
@@ -91,6 +93,10 @@ RegionSelectionView.onScrollSelection
 `CutterCore` 是不依赖 AppKit 窗口的 SwiftPM 模块，当前用 CoreGraphics 接收与输出图像。它将像素匹配与 macOS 权限、窗口状态分离，并不意味着已经完成 Windows 平台移植。首屏、最新有效帧和新增条带保存在内存；最终完整图像在结束时合成。
 
 冻结选区窗口在实时采样前隐藏，边框点击穿透，控制面板不抢原应用的滚动输入。屏幕的全局位置、显示器局部点坐标与图像物理像素分别在捕获边界转换。会话用失效标记拒绝取消、暂停或撤销前发出的过时工作；完成等待已进入匹配的有效帧结算，取消仍可阻止结果输出。
+
+自动模式固定选区中心对应的进程、窗口 ID 和窗口边界，每次采样前后及发送事件前检查前台应用和窗口遮挡 / 位置。CoreGraphics 像素单位滚轮事件通过 HID 事件入口交给 WindowServer，根据已校验的窗口位置派发；直接 `postToPid` 会令 AppKit 滚轮事件的窗口编号为 0，实测无法滚动。位置由显示器局部选区转换到全局左上原点坐标。自动模式临时把鼠标放到选区中心；停止时仅在鼠标仍位于该点的情况下恢复原位置，用户移开鼠标则暂停，不抢回鼠标、不激活应用。自身非穿透面板遮挡中心点时也会暂停。使用 `CGPreflightPostEventAccess` 检查权限，只有用户点击授权入口时调用 `CGRequestPostEventAccess`。
+
+HUD 一次只运行一轮采样，用 revision 丢弃暂停、模式切换和撤销之前的 UI 回调。自动步进最多 120 pt，依赖稳定帧匹配结果继续；重复帧至少间隔 2 秒重试，连续 3 次无变化或 8 秒无法稳定时暂停。切换模式和撤销会暂停，恢复时先采样当前画面再决定是否滚动。完成 / 取消会立即停止事件发送和定时采样。
 
 长图预览使用原生滚动容器，输出复用现有复制、PNG 存储与临时贴图行为。普通截图标注暂未迁到共享核心，因此首版长图不提供标注；后续须抽出统一图像坐标模型再接入。
 
@@ -151,6 +157,8 @@ AppKit 选区点数
 2. `scripts/build-dev.sh`：直接调用 `swiftc`，源文件列表必须显式维护。
 
 直接编译脚本先编译 `CutterCore` 模块与对象文件，再将其链接到 `CutterMac`。滚动截图有三条独立回归命令：`scripts/test-scroll-stitcher.sh`（像素匹配与上限）、`scripts/test-scroll-session.sh`（异步生命周期）、`scripts/test-scroll-ui.sh`（原生窗口行为）。这些脚本使用合成图像，不等同于真实桌面捕获验收。
+
+`scripts/test-scroll-ui.sh` 同时覆盖自动步进、稳定拼接后继续、暂停 / 恢复、目标失效、完成后停止及无权限切回手动。`scripts/test-scroll-auto-desktop.sh` 启动独立的可控原生滚动窗口，验证实际滚轮事件、ScreenCaptureKit 捕获、拼接、排除自身窗口及完成后停止；需要屏幕录制和事件发送权限，缺少权限时以退出码 2 明确报告。它不代表所有第三方应用已验收。
 
 `scripts/build-app.sh` 先调用 `build-dev.sh`，再把可执行文件放入 `.build/Cutter.app` 并使用本机开发身份签名。新增 Swift 文件时，应同时验证 SwiftPM、直接编译和 `.app` 打包三条路径。
 

@@ -11,6 +11,7 @@ swiftc -o .build/scroll-ui-harness \
   "$PROJECT_DIR"/Sources/CutterMac/Capture/CaptureSettings.swift \
   "$PROJECT_DIR"/Sources/CutterMac/Capture/ScreenCaptureBackend.swift \
   "$PROJECT_DIR"/Sources/CutterMac/Capture/ScrollCaptureSession.swift \
+  "$PROJECT_DIR"/Sources/CutterMac/Capture/AutomaticScrollDriver.swift \
   "$PROJECT_DIR"/Sources/CutterMac/Selection/ScrollCaptureHUDController.swift \
   "$PROJECT_DIR"/Sources/CutterMac/Application/LongImagePreviewController.swift \
   "$PROJECT_DIR"/Sources/CutterMac/Application/PinnedImageWindowController.swift \

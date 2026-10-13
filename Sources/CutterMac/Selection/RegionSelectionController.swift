@@ -112,7 +112,8 @@ final class RegionSelectionController {
                 let sampler = try await provider(displayID, region)
                 guard self.scrollGeneration == token, self.continuation != nil else { await sampler.cancel(); return }
                 let session = ScrollCaptureSession(sampler: sampler)
-                let hud = ScrollCaptureHUDController(session: session, region: region)
+                let driver = AutomaticScrollDriver(displayID: displayID, region: region)
+                let hud = ScrollCaptureHUDController(session: session, region: region, automaticDriver: driver)
                 hud.onFinish = { [weak self] image in
                     self?.showScrollPreview(image, scaleFactor: scaleFactor)
                 }

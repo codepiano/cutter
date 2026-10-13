@@ -27,6 +27,7 @@ swiftc \
   "$project_dir/Sources/CutterMac/Capture/ScreenCaptureBackend.swift" \
   "$project_dir/Sources/CutterMac/Capture/ScreenCaptureKitBackend.swift" \
   "$project_dir/Sources/CutterMac/Capture/ScrollCaptureSession.swift" \
+  "$project_dir/Sources/CutterMac/Capture/AutomaticScrollDriver.swift" \
   "$project_dir/Sources/CutterMac/Capture/CaptureSettings.swift" \
   "$project_dir/Sources/CutterMac/Capture/CaptureCountdownController.swift" \
   "$project_dir/Sources/CutterMac/Capture/CaptureSizePreset.swift" \

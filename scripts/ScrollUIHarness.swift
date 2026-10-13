@@ -14,6 +14,36 @@ actor MockSampler: ScrollFrameSampler {
 }
 
 @MainActor
+final class MockScrollDriver: AutomaticScrollDriving {
+    var scrollCount = 0
+    var failure: AutomaticScrollError?
+    var permissionRequests = 0
+    var onScroll: (() -> Void)?
+    func prepare() throws { if let failure { throw failure } }
+    func scrollDown(points: Int32) throws {
+        try prepare()
+        assert(points > 0 && points <= 120)
+        scrollCount += 1
+        onScroll?()
+    }
+    func requestPermission() { permissionRequests += 1 }
+    func stop() {}
+}
+
+@MainActor
+final class ScrollingFixtureSampler: ScrollFrameSampler {
+    let source: CGImage
+    var offset = 0
+    var sampleCount = 0
+    init(source: CGImage) { self.source = source }
+    func sample() async throws -> CapturedImage {
+        sampleCount += 1
+        return CapturedImage(image: source.cropping(to: CGRect(x: 0, y: offset, width: 96, height: 96))!, displayID: 1, scaleFactor: 1)
+    }
+    func cancel() async {}
+}
+
+@MainActor
 final class ScrollUIHarness {
     let outputURL: URL
     init(outputURL: URL) { self.outputURL = outputURL }
@@ -43,6 +73,9 @@ final class ScrollUIHarness {
         try? await Task.sleep(for: .milliseconds(400))
         let laterCount = await sampler.sampleCount
         assert(stoppedCount == laterCount, "closed HUD must not start another capture")
+
+        testAutomaticPacer()
+        await testAutomaticHUD()
 
         let preview = LongImagePreviewController(image: image, scaleFactor: 1)
         var closeCount = 0
@@ -89,6 +122,108 @@ final class ScrollUIHarness {
         smallPin.show(); assert(smallPin.window.frame.width < 720); render(smallPin.window, named: "pin-normal.png"); smallPin.close()
         print("Scroll UI harness passed; PNGs: \(outputURL.path)")
         NSApp.terminate(nil)
+    }
+
+    private func testAutomaticPacer() {
+        var pacer = AutomaticScrollPacer()
+        assert(pacer.next(for: .ready, now: 0) == .scroll)
+        pacer.didScroll(at: 0)
+        assert(pacer.next(for: .waitingForStableFrame, now: 0.32) == .wait)
+        assert(pacer.next(for: .duplicate, now: 1) == .wait)
+        assert(pacer.next(for: .duplicate, now: 2) == .scroll)
+        pacer.didScroll(at: 2)
+        assert(pacer.next(for: .duplicate, now: 4) == .scroll)
+        pacer.didScroll(at: 4)
+        guard case .pause = pacer.next(for: .duplicate, now: 6) else { fatalError("unchanged content must pause") }
+        pacer.reset()
+        assert(pacer.next(for: .duplicate, now: 7) == .scroll, "resume can restart from an unchanged baseline")
+        pacer.didScroll(at: 7)
+        guard case .pause = pacer.next(for: .waitingForStableFrame, now: 15) else { fatalError("unstable content must time out") }
+        pacer.reset()
+        assert(pacer.next(for: .waitingForStableFrame, now: 20) == .wait)
+        guard case .pause = pacer.next(for: .waitingForStableFrame, now: 28) else { fatalError("resume instability must time out") }
+        for outcome: ScrollCaptureSession.FrameOutcome in [.reverse, .ambiguous, .insufficientOverlap, .lowTexture] {
+            guard case .pause = pacer.next(for: outcome, now: 30) else { fatalError("unreliable match must stop input") }
+        }
+        pacer.reset()
+        assert(pacer.next(for: .accepted(addedHeight: 20, totalHeight: 116, segmentCount: 2), now: 31) == .scroll)
+    }
+
+    private func testAutomaticHUD() async {
+        // Real session + deterministic scrolling content, with fake event egress.
+        let context = CGContext(data: nil, width: 96, height: 500, bitsPerComponent: 8, bytesPerRow: 384, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        let bytes = context.data!.assumingMemoryBound(to: UInt8.self)
+        for y in 0..<500 { for x in 0..<96 {
+            let i = (y * 96 + x) * 4
+            let v = UInt8((x * 17 + y * 29 + ((x / 7 + y / 5) % 2) * 61) & 255)
+            bytes[i] = v; bytes[i + 1] = v ^ 0x35; bytes[i + 2] = v ^ 0x7a; bytes[i + 3] = 255
+        } }
+        let sampler = ScrollingFixtureSampler(source: context.makeImage()!)
+        let driver = MockScrollDriver()
+        driver.onScroll = { sampler.offset = min(400, sampler.offset + 20) }
+        let session = ScrollCaptureSession(sampler: sampler)
+        let hud = ScrollCaptureHUDController(session: session, region: CGRect(x: 40, y: 120, width: 420, height: 300), automaticDriver: driver)
+        hud.show()
+        do { try await hud.start() } catch { fatalError("auto start failed: \(error)") }
+        assert(driver.scrollCount == 1)
+        await waitUntil { driver.scrollCount >= 2 }
+        assert(driver.scrollCount >= 2, "successful stitching drives another step")
+        let pause = allButtons(in: hud.window).first(where: { $0.title == "暂停" })!
+        pause.performClick(nil)
+        try? await Task.sleep(for: .milliseconds(100))
+        let count = driver.scrollCount
+        try? await Task.sleep(for: .milliseconds(800))
+        assert(count == driver.scrollCount, "pause stops automatic input")
+        pause.performClick(nil)
+        await waitUntil { driver.scrollCount > count }
+        assert(driver.scrollCount > count, "resume observes then scrolls")
+        driver.failure = .targetChanged
+        try? await Task.sleep(for: .milliseconds(800))
+        let state = await session.state
+        assert(state == .paused)
+        assert(allLabels(in: hud.window).contains(where: { $0.stringValue.contains("目标窗口") }))
+        render(hud.window, named: "hud-auto-paused.png")
+        var outputs = 0
+        hud.onFinish = { _ in outputs += 1 }
+        allButtons(in: hud.window).first(where: { $0.title == "完成" })!.performClick(nil)
+        try? await Task.sleep(for: .milliseconds(200))
+        assert(outputs == 1)
+        let finishedCount = driver.scrollCount
+        try? await Task.sleep(for: .milliseconds(400))
+        assert(driver.scrollCount == finishedCount)
+        hud.close()
+
+        let deniedDriver = MockScrollDriver()
+        deniedDriver.failure = .permissionRequired
+        let deniedSession = ScrollCaptureSession(sampler: MockSampler(image: syntheticImage(width: 96, height: 96)))
+        let deniedHUD = ScrollCaptureHUDController(session: deniedSession, region: .zero, automaticDriver: deniedDriver)
+        deniedHUD.show()
+        do { try await deniedHUD.start() } catch { fatalError("denied HUD failed: \(error)") }
+        assert(deniedDriver.scrollCount == 0)
+        let permission = allButtons(in: deniedHUD.window).first(where: { $0.title == "授权…" })!
+        assert(!permission.isHidden)
+        permission.performClick(nil)
+        assert(deniedDriver.permissionRequests == 1)
+        let modes = deniedHUD.window.contentView!.subviews.compactMap { $0 as? NSSegmentedControl }.first!
+        modes.selectedSegment = 1
+        _ = modes.sendAction(modes.action!, to: modes.target)
+        try? await Task.sleep(for: .milliseconds(100))
+        allButtons(in: deniedHUD.window).first(where: { $0.title == "继续" })!.performClick(nil)
+        try? await Task.sleep(for: .milliseconds(800))
+        assert(deniedDriver.scrollCount == 0, "manual fallback never sends input")
+        let manualState = await deniedSession.state
+        assert(manualState == .capturing)
+        deniedHUD.close()
+        try? await Task.sleep(for: .milliseconds(400))
+        assert(deniedDriver.scrollCount == 0)
+        print("Automatic scroll regression passed: pacing, matched advance, pause/resume, target change, finish, permission/manual fallback")
+    }
+
+    private func waitUntil(_ condition: () -> Bool) async {
+        for _ in 0..<50 {
+            if condition() { return }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
     }
 
     private func allButtons(in window: NSWindow) -> [NSButton] {
