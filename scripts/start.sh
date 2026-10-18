@@ -13,8 +13,16 @@ if pids="$(owned_pids)" && [[ -n "$pids" ]]; then
   exit 0
 fi
 clear_pid
-ensure_app
-open "$app_bundle" >>"$log_file" 2>&1
+if ! ensure_app; then
+  print -u2 "Cutter 构建失败。日志：${log_file}"
+  tail -n 40 "$log_file" >&2 || true
+  exit 1
+fi
+if ! open "$app_bundle" >>"$log_file" 2>&1; then
+  print -u2 "Cutter 打开失败。日志：${log_file}"
+  tail -n 40 "$log_file" >&2 || true
+  exit 1
+fi
 for _ in {1..40}; do
   if pids="$(owned_pids)" && [[ -n "$pids" ]]; then
     pid="${pids%%$'\n'*}"
