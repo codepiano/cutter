@@ -97,7 +97,7 @@ Cutter 是一个原生 macOS 静态截图工具，专注于快速完成区域选
 
 ### 精确尺寸
 
-宽度和高度使用截图像素，而不是界面点数。
+宽度和高度使用截图像素，而不是界面点数。普通截图和滚动截图均保留 Retina 的完整渲染像素；例如 1440 × 900 pt 的 2× 桌面按 2880 × 1800 px 捕获，PNG 存储保留原始像素尺寸。
 
 - 修改输入框后，“应用”按钮会高亮。
 - 应用成功后短暂显示“已应用”。
@@ -242,3 +242,5 @@ Cutter 使用 `UserDefaults` 保存：
 架构与模块边界见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
 
 滚动截图的产品流程、拼接规则与验证记录见 [`docs/SCROLLING_CAPTURE.md`](docs/SCROLLING_CAPTURE.md)。
+
+Retina 分辨率回归：`./scripts/test-retina-capture.sh` 检查显示模式与缩放几何；加上 `--desktop` 可验证真实屏幕捕获、滚动采样及 PNG 像素尺寸，需要屏幕录制权限。

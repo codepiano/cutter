@@ -2,6 +2,28 @@ import CoreGraphics
 import Foundation
 import ScreenCaptureKit
 
+// CGDisplayPixelsWide/High can report logical dimensions on Retina displays.
+// The active mode's pixel dimensions describe the full render buffer, including
+// scaled modes (for example 1440 x 900 points rendered at 2880 x 1800 pixels).
+struct DisplayCaptureGeometry: Equatable, Sendable {
+    let bounds: CGRect
+    let pixelWidth: Int
+    let pixelHeight: Int
+
+    var scaleFactor: CGFloat { CGFloat(pixelWidth) / bounds.width }
+
+    static func current(for displayID: CGDirectDisplayID) throws -> Self {
+        let bounds = CGDisplayBounds(displayID)
+        guard CGDisplayIsActive(displayID) != 0,
+              let mode = CGDisplayCopyDisplayMode(displayID),
+              bounds.width > 0, bounds.height > 0,
+              mode.pixelWidth > 0, mode.pixelHeight > 0 else {
+            throw ScreenCaptureError.primaryDisplayUnavailable
+        }
+        return Self(bounds: bounds, pixelWidth: mode.pixelWidth, pixelHeight: mode.pixelHeight)
+    }
+}
+
 actor ScreenCaptureKitBackend: ScreenCaptureBackend {
     func prepareScrollSampler(
         displayID: CGDirectDisplayID,
@@ -20,8 +42,9 @@ actor ScreenCaptureKitBackend: ScreenCaptureBackend {
             excludingApplications: [ownApplication],
             exceptingWindows: []
         )
-        let scale = Self.scaleFactor(for: displayID)
-        let displayBounds = CGDisplayBounds(displayID)
+        let geometry = try DisplayCaptureGeometry.current(for: displayID)
+        let scale = geometry.scaleFactor
+        let displayBounds = geometry.bounds
         // AppKit region is bottom-left; ScreenCaptureKit sourceRect is display
         // local top-left points.
         let sourceRect = CGRect(
@@ -44,7 +67,7 @@ actor ScreenCaptureKitBackend: ScreenCaptureBackend {
             filter: filter,
             configuration: configuration,
             displayID: displayID,
-            scaleFactor: scale
+            geometry: geometry
         )
     }
 
@@ -114,8 +137,9 @@ actor ScreenCaptureKitBackend: ScreenCaptureBackend {
             exceptingWindows: []
         )
         let configuration = SCStreamConfiguration()
-        configuration.width = Int(CGDisplayPixelsWide(displayID))
-        configuration.height = Int(CGDisplayPixelsHigh(displayID))
+        let geometry = try DisplayCaptureGeometry.current(for: displayID)
+        configuration.width = geometry.pixelWidth
+        configuration.height = geometry.pixelHeight
         configuration.showsCursor = includeCursor
         configuration.capturesAudio = false
 
@@ -126,7 +150,7 @@ actor ScreenCaptureKitBackend: ScreenCaptureBackend {
         return CapturedImage(
             image: image,
             displayID: displayID,
-            scaleFactor: Self.scaleFactor(for: displayID)
+            scaleFactor: geometry.scaleFactor
         )
     }
 
@@ -180,41 +204,32 @@ actor ScreenCaptureKitBackend: ScreenCaptureBackend {
         guard CGGetActiveDisplayList(count, &displays, &count) == .success else { return nil }
         return displays.first(where: { CGDisplayBounds($0).intersects(windowFrame) })
     }
-
-    private static func scaleFactor(for displayID: CGDirectDisplayID) -> CGFloat {
-        let logicalWidth = CGDisplayBounds(displayID).width
-        guard logicalWidth > 0 else { return 1 }
-        return CGFloat(CGDisplayPixelsWide(displayID)) / logicalWidth
-    }
 }
 
 final class ScreenCaptureKitRegionSampler: ScrollFrameSampler, @unchecked Sendable {
     private let filter: SCContentFilter
     private let configuration: SCStreamConfiguration
     private let displayID: CGDirectDisplayID
-    private let scaleFactor: CGFloat
-    private let expectedDisplayPixels: CGSize
+    private let geometry: DisplayCaptureGeometry
     private let expectedConfigurationSize: CGSize
 
     init(
         filter: SCContentFilter,
         configuration: SCStreamConfiguration,
         displayID: CGDirectDisplayID,
-        scaleFactor: CGFloat
+        geometry: DisplayCaptureGeometry
     ) {
         self.filter = filter
         self.configuration = configuration
         self.displayID = displayID
-        self.scaleFactor = scaleFactor
-        self.expectedDisplayPixels = CGSize(width: CGDisplayPixelsWide(displayID), height: CGDisplayPixelsHigh(displayID))
+        self.geometry = geometry
         self.expectedConfigurationSize = CGSize(width: configuration.width, height: configuration.height)
     }
 
     func sample() async throws -> CapturedImage {
         try Task.checkCancellation()
-        guard CGDisplayIsActive(displayID) != 0,
-              CGSize(width: CGDisplayPixelsWide(displayID), height: CGDisplayPixelsHigh(displayID)) == expectedDisplayPixels,
-              abs(Self.scaleFactor(for: displayID) - scaleFactor) < 0.01 else {
+        guard let currentGeometry = try? DisplayCaptureGeometry.current(for: displayID),
+              currentGeometry == geometry else {
             throw ScreenCaptureError.captureGeometryChanged
         }
         let image = try await SCScreenshotManager.captureImage(
@@ -222,17 +237,13 @@ final class ScreenCaptureKitRegionSampler: ScrollFrameSampler, @unchecked Sendab
             configuration: configuration
         )
         try Task.checkCancellation()
-        guard CGSize(width: image.width, height: image.height) == expectedConfigurationSize else {
+        guard let completedGeometry = try? DisplayCaptureGeometry.current(for: displayID),
+              completedGeometry == geometry,
+              CGSize(width: image.width, height: image.height) == expectedConfigurationSize else {
             throw ScreenCaptureError.captureGeometryChanged
         }
-        return CapturedImage(image: image, displayID: displayID, scaleFactor: scaleFactor)
+        return CapturedImage(image: image, displayID: displayID, scaleFactor: geometry.scaleFactor)
     }
 
     func cancel() async {}
-
-    private static func scaleFactor(for displayID: CGDirectDisplayID) -> CGFloat {
-        let logicalWidth = CGDisplayBounds(displayID).width
-        guard logicalWidth > 0 else { return 1 }
-        return CGFloat(CGDisplayPixelsWide(displayID)) / logicalWidth
-    }
 }

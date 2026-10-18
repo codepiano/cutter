@@ -112,7 +112,13 @@ private struct AutoScrollDesktopHarness {
         NSRunningApplication(processIdentifier: target.processIdentifier)?.activate(options: [])
         try await Task.sleep(for: .milliseconds(200))
         try await hud.start()
-        try await Task.sleep(for: .seconds(4))
+        // Retina matching processes four times as many pixels. Wait for an
+        // accepted strip rather than finishing after a fixed wall-clock delay.
+        for _ in 0..<150 {
+            let progress = hud.window.contentView!.subviews.compactMap { $0 as? NSTextField }.map(\.stringValue)
+            if progress.contains(where: { $0.contains("已拼接") && !$0.contains("已拼接 1 段") }) { break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
         let advanced = try read()
         let labels = hud.window.contentView!.subviews.compactMap { $0 as? NSTextField }.map(\.stringValue)
         guard advanced["offset"]! > 0 else { throw Failure(message: "posted wheel events did not move the target; status=\(labels), target=\(target.processIdentifier), front=\(NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0)") }
@@ -127,7 +133,9 @@ private struct AutoScrollDesktopHarness {
             if result != nil { break }
             try await Task.sleep(for: .milliseconds(100))
         }
-        guard let result, result.height > Int(region.height) else {
+        let expectedWidth = Int((region.width * mainScreen.backingScaleFactor).rounded())
+        let expectedFrameHeight = Int((region.height * mainScreen.backingScaleFactor).rounded())
+        guard let result, result.width == expectedWidth, result.height > expectedFrameHeight else {
             throw Failure(message: "no multi-frame long image; status=\(labels)")
         }
         let rep = NSBitmapImageRep(cgImage: result)
