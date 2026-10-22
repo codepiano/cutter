@@ -3,10 +3,10 @@
   "name": "Cutter",
   "workingDirectory": ".",
   "initCommand": "./scripts/build-app.sh",
-  "startCommand": "./scripts/start.sh",
-  "stopCommand": "./scripts/stop.sh",
-  "statusCommand": "./scripts/status.sh",
-  "restartCommand": "./scripts/restart.sh",
+  "startCommand": "./scripts/release-start.sh",
+  "stopCommand": "./scripts/release-stop.sh",
+  "statusCommand": "./scripts/release-status.sh",
+  "restartCommand": "./scripts/release-restart.sh",
   "openEntryCommand": "./scripts/open-homepage.sh",
   "openHomepageCommand": "./scripts/open-homepage.sh",
   "surfaceType": "desktop",
@@ -14,5 +14,19 @@
   "processMode": "managed",
   "processManager": "project-script",
   "pidFile": ".control-panel/cutter.pid",
-  "notes": "原生 macOS 菜单栏截图工具"
+  "notes": "原生 macOS 菜单栏截图工具",
+  "release": {
+    "protocol": 1,
+    "prepareTimeoutMs": 1800000,
+    "activateTimeoutMs": 240000
+  },
+  "scripts": {
+    "version": "./scripts/release-version.sh",
+    "prepare": "./scripts/release-prepare.sh",
+    "activate": "./scripts/release-activate.sh",
+    "start": "./scripts/release-start.sh",
+    "stop": "./scripts/release-stop.sh",
+    "status": "./scripts/release-status.sh",
+    "restart": "./scripts/release-restart.sh"
+  }
 }

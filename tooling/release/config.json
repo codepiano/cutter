@@ -1,0 +1,40 @@
+{
+  "legacy": {
+    "start": [
+      "./scripts/start.sh"
+    ],
+    "stop": [
+      "./scripts/stop.sh"
+    ],
+    "status": [
+      "./scripts/status.sh"
+    ]
+  },
+  "prepare": [
+    [
+      "./scripts/build-app.sh"
+    ]
+  ],
+  "outputs": [
+    ".build/Cutter.app/Contents/MacOS/CutterMac"
+  ],
+  "persistent": [],
+  "runtimeFiles": [
+    ".env",
+    ".env.local",
+    ".env.production"
+  ],
+  "exclude": [],
+  "toolchain": [
+    [
+      "swiftc",
+      "--version"
+    ]
+  ],
+  "startupTimeoutSec": 180,
+  "patches": [],
+  "prepareStepTimeoutSec": 120,
+  "buildEnvironment": [
+    "CUTTER_SIGNING_IDENTITY"
+  ]
+}
