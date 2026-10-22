@@ -3,6 +3,7 @@ import Foundation
 
 @MainActor
 final class GlobalShortcutService {
+    static let registrationOptions = UInt32(kEventHotKeyExclusive)
     static let defaultKeyCode = UInt32(kVK_ANSI_2)
     static let defaultModifiers = UInt32(cmdKey | optionKey)
 
@@ -38,7 +39,7 @@ final class GlobalShortcutService {
             Self.defaultModifiers,
             hotKeyID,
             GetApplicationEventTarget(),
-            0,
+            Self.registrationOptions,
             &hotKeyRef
         )
         guard registerStatus == noErr else {

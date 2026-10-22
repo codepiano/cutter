@@ -21,6 +21,7 @@ swiftc \
   -I "$output_dir" \
   "$output_dir/CutterCore.o" \
   "$project_dir/Sources/CutterMac/CutterMain.swift" \
+  "$project_dir/Sources/CutterMac/Application/SingleInstanceLock.swift" \
   "$project_dir/Sources/CutterMac/Application/AppDelegate.swift" \
   "$project_dir/Sources/CutterMac/Application/PinnedImageWindowController.swift" \
   "$project_dir/Sources/CutterMac/Application/LongImagePreviewController.swift" \

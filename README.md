@@ -244,3 +244,5 @@ Cutter 使用 `UserDefaults` 保存：
 滚动截图的产品流程、拼接规则与验证记录见 [`docs/SCROLLING_CAPTURE.md`](docs/SCROLLING_CAPTURE.md)。
 
 Retina 分辨率回归：`./scripts/test-retina-capture.sh` 检查显示模式与缩放几何；加上 `--desktop` 可验证真实屏幕捕获、滚动采样及 PNG 像素尺寸，需要屏幕录制权限。
+
+Cutter 在同一用户下只运行一个实例，不同项目副本和版本目录共享进程锁。全局快捷键采用独占注册，避免一次按键启动多层截图遮罩。`./scripts/test-single-instance.sh` 使用临时锁文件和独立快捷键验证跨进程互斥、退出释放及重复注册，不操作正在运行的 Cutter。
