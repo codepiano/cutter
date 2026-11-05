@@ -14,6 +14,10 @@ import sys
 import tempfile
 import time
 
+# Keep a project-owned copy: releases never depend on the global Skill installation.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from release_retention import ReleaseRetention
+
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG_PATH = ROOT / 'tooling/release/config.json'
 CONFIG = json.loads(CONFIG_PATH.read_text())
@@ -409,8 +413,18 @@ def attach_runtime(directory):
             raise RuntimeError('准备好的 launchd 配置路径不匹配')
 
 
+def remember_release(identifier, *, seed_only=False):
+    try:
+        ReleaseRetention(STORE, lambda value: verified(value, full=True)).remember(identifier, seed_only=seed_only)
+    except Exception as error:
+        # Retention must never prevent stopping a service or invalidate a healthy activation.
+        print('发布保留记录更新已跳过: ' + str(error), file=sys.stderr)
+
+
 def stop():
     record = active()
+    if record and record.get('activationSucceeded', True):
+        remember_release(record['artifactId'], seed_only=True)
     result = legacy('stop', artifact(record['artifactId']) if record else ROOT, check=False)
     sys.stderr.buffer.write(result.stdout + result.stderr)
     if result.returncode:
@@ -448,9 +462,11 @@ def activate():
     processes = identities(directory)
     # Record real process identities even on partial startup failure, so stop can address them.
     if processes:
-        atomic(ACTIVE, dict(artifactId=identifier, runningRevision=target, processes=processes))
+        atomic(ACTIVE, dict(artifactId=identifier, runningRevision=target, processes=processes, activationSucceeded=False))
     if result.returncode or not processes or legacy('status', directory, check=False).returncode:
         raise RuntimeError('新版启动或进程身份核验失败；保留实际进程记录供排查')
+    atomic(ACTIVE, dict(artifactId=identifier, runningRevision=target, processes=processes, activationSucceeded=True))
+    remember_release(identifier)
     return dict(runningRevision=target)
 
 
@@ -468,6 +484,8 @@ def main():
             value = prepare()
         elif action == 'activate':
             value = activate()
+        elif action == 'prune':
+            value = ReleaseRetention(STORE, lambda item: verified(item, full=True)).prune()
         elif action == 'stop':
             value = stop()
         elif action in {'start', 'restart'}:
@@ -481,6 +499,14 @@ def main():
                 value = activate()
         else:
             raise RuntimeError('不支持的操作')
+        if action in {'prepare', 'activate', 'start', 'restart'}:
+            try:
+                cleanup = ReleaseRetention(STORE, lambda item: verified(item, full=True)).prune()
+                if cleanup['removed']:
+                    print('已清理历史发布版本: ' + str(len(cleanup['removed'])), file=sys.stderr)
+            except Exception as error:
+                # An inspection/cleanup failure must not turn a healthy activation into a failure.
+                print('自动清理已跳过: ' + str(error), file=sys.stderr)
         print(json.dumps(value))
 
 
