@@ -11,3 +11,7 @@
 .impeccable/hook.cache.json
 .impeccable/hook.pending.json
 .impeccable/live/
+
+# Python bytecode caches
+__pycache__/
+*.py[cod]
