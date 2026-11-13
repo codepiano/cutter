@@ -21,7 +21,7 @@ struct CaptureWorkspace: @unchecked Sendable {
 }
 
 protocol ScreenCaptureBackend: Sendable {
-    func preparePrimaryDisplay(includeCursor: Bool) async throws -> CaptureWorkspace
+    func prepareDisplay(displayID: CGDirectDisplayID, includeCursor: Bool) async throws -> CaptureWorkspace
     func captureWindow(id: CGWindowID, includeCursor: Bool) async throws -> CapturedImage
     func prepareScrollSampler(
         displayID: CGDirectDisplayID,
@@ -37,7 +37,7 @@ protocol ScrollFrameSampler: Sendable {
 
 enum ScreenCaptureError: LocalizedError, Equatable {
     case permissionDenied
-    case primaryDisplayUnavailable
+    case displayUnavailable
     case windowUnavailable
     case captureGeometryChanged
     case captureFilterUnavailable
@@ -46,8 +46,8 @@ enum ScreenCaptureError: LocalizedError, Equatable {
         switch self {
         case .permissionDenied:
             "Cutter 没有屏幕录制权限。请在系统设置的“隐私与安全性”中允许后重试。"
-        case .primaryDisplayUnavailable:
-            "没有找到可截取的主显示器。"
+        case .displayUnavailable:
+            "没有找到要截取的显示器，请重新触发截图。"
         case .windowUnavailable:
             "目标窗口已经关闭或不再可截取。"
         case .captureGeometryChanged:

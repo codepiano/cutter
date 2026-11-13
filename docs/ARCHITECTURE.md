@@ -9,7 +9,7 @@ Cutter 当前是原生 macOS 菜单栏应用。系统集成继续由 AppKit、Sc
           |
       AppDelegate
           |
- ScreenCaptureKitBackend  -- 屏幕权限、主显示器、冻结画面
+ ScreenCaptureKitBackend  -- 屏幕权限、目标显示器、冻结画面
           |
  RegionSelectionController -- 全屏无边框窗口与会话生命周期
           |
@@ -43,10 +43,11 @@ ImageClipboard               ImageFileWriter
 ### `Capture`
 
 - `ScreenCaptureBackend`：屏幕捕获抽象。
-- `ScreenCaptureKitBackend`：冻结主显示器图像、枚举普通窗口，并通过 `desktopIndependentWindow` 过滤器直接捕获选定窗口。
-- `CaptureWorkspace`：一次捕获准备阶段产生的主显示器图像和按前后顺序排列的窗口元数据。
+- `CaptureDisplay`：在截图触发时根据鼠标指针位置选定显示器；倒计时和捕获沿用同一个显示器 ID。
+- `ScreenCaptureKitBackend`：冻结目标显示器图像、枚举普通窗口，并通过 `desktopIndependentWindow` 过滤器直接捕获选定窗口。
+- `CaptureWorkspace`：一次捕获准备阶段产生的目标显示器图像和按前后顺序排列的窗口元数据。
 - `CaptureSettings`：鼠标指针、默认输出和存储目录。
-- `CaptureCountdownController`：位于主显示器中央的非激活倒计时 HUD；捕获前和取消后负责隐藏窗口。
+- `CaptureCountdownController`：位于目标显示器中央的非激活倒计时 HUD；捕获前和取消后负责隐藏窗口。
 - `CaptureSizePreset` / `CaptureSizePresetStore`：内置尺寸、自定义尺寸校验、去重和 `UserDefaults` 持久化。
 - `ImageFileWriter`：PNG 本机输出。
 
@@ -117,7 +118,7 @@ AppKit 选区点数
 
 隐私标注中的马赛克和模糊使用标注创建时生成的独立随机种子，生成与原始画面无关的随机内容；马赛克使用随机色块，模糊先生成随机低频纹理再对随机纹理做 Core Image 模糊。预览、移动、撤销和导出复用同一随机种子，因此效果稳定且不会把原始像素送入隐私滤镜。
 
-智能窗口选择只接收完整位于主显示器、`windowLayer == 0`、尺寸达到最低阈值且不属于 Cutter 进程的窗口。ScreenCaptureKit 窗口 frame 使用全局显示器坐标；`RegionSelectionView` 将它转换为覆盖窗口的左下原点坐标。单击窗口后，完成动作通过注入的异步窗口捕获闭包取得独立窗口图像，再复用现有标注渲染器；一旦用户移动、缩放或输入新尺寸，窗口来源失效并退回冻结屏幕区域裁剪。
+智能窗口选择只接收完整位于目标显示器、`windowLayer == 0`、尺寸达到最低阈值且不属于 Cutter 进程的窗口。ScreenCaptureKit 窗口 frame 使用全局显示器坐标；`RegionSelectionView` 将它转换为覆盖窗口的左下原点坐标。单击窗口后，完成动作通过注入的异步窗口捕获闭包取得独立窗口图像，再复用现有标注渲染器；一旦用户移动、缩放或输入新尺寸，窗口来源失效并退回冻结屏幕区域裁剪。
 
 自定义颜色通过 expanded `NSColorWell` 接入 AppKit 共享 `NSColorPanel`。选择会话创建时，颜色面板临时提升到截图遮罩之上；会话完成或取消时关闭面板并恢复原窗口层级。标注对象保存标准 RGB `NSColor`，因此快捷色和任意自定义色共享同一预览、撤销和导出路径。
 

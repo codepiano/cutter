@@ -42,10 +42,7 @@ final class RegionSelectionController {
         windows: [CapturableWindow],
         windowCaptureProvider: (@Sendable (CGWindowID) async throws -> CapturedImage)?
     ) {
-        guard let screen = NSScreen.screens.first(where: {
-            ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
-                == capture.displayID
-        }) else {
+        guard let screen = CaptureDisplay.screen(for: capture.displayID) else {
             finish(with: nil)
             return
         }
@@ -67,8 +64,9 @@ final class RegionSelectionController {
             self?.startScrollCapture(region: region, displayID: capture.displayID, scaleFactor: capture.scaleFactor, overlay: overlay)
         }
 
+        // With a screen argument, AppKit expects a screen-local rectangle.
         let window = RegionSelectionWindow(
-            contentRect: screen.frame,
+            contentRect: overlay.frame,
             styleMask: .borderless,
             backing: .buffered,
             defer: false,
@@ -87,6 +85,7 @@ final class RegionSelectionController {
         NSCursor.crosshair.push()
         cursorPushed = true
         self.window = window
+        captureScreen = screen
     }
 
     private func startScrollCapture(region: CGRect, displayID: CGDirectDisplayID, scaleFactor: CGFloat, overlay: RegionSelectionView?) {
@@ -99,10 +98,8 @@ final class RegionSelectionController {
         sourceWindow?.orderOut(nil)
         releaseApplicationFocus()
         if cursorPushed { NSCursor.pop(); cursorPushed = false }
-        if let screen = sourceWindow?.screen {
-            captureScreen = screen
-            let frame = CGRect(x: screen.frame.minX + region.minX, y: screen.frame.minY + region.minY, width: region.width, height: region.height)
-            let border = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false, screen: screen)
+        if let screen = captureScreen {
+            let border = NSWindow(contentRect: region, styleMask: .borderless, backing: .buffered, defer: false, screen: screen)
             border.isOpaque = false; border.backgroundColor = .clear; border.level = .floating; border.ignoresMouseEvents = true; border.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             border.contentView = ScrollRegionBorderView(frame: CGRect(origin: .zero, size: region.size)); border.orderFrontRegardless(); borderWindow = border
         }

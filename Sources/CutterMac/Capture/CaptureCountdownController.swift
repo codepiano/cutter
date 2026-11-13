@@ -48,11 +48,12 @@ final class CaptureCountdownController {
 
     func run(
         seconds: Int,
+        displayID: CGDirectDisplayID,
         tickNanoseconds: UInt64 = 1_000_000_000,
         onTick: @escaping @MainActor (Int) -> Void
     ) async throws {
         guard seconds > 0 else { return }
-        show()
+        try show(on: displayID)
         defer { hide() }
 
         for remaining in stride(from: seconds, through: 1, by: -1) {
@@ -69,17 +70,14 @@ final class CaptureCountdownController {
         hide()
     }
 
-    private func show() {
-        let targetScreen = NSScreen.screens.first(where: {
-            ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
-                == CGMainDisplayID()
-        }) ?? NSScreen.main
-        if let frame = targetScreen?.visibleFrame {
-            panel.setFrameOrigin(CGPoint(
-                x: frame.midX - panel.frame.width / 2,
-                y: frame.midY - panel.frame.height / 2
-            ))
+    private func show(on displayID: CGDirectDisplayID) throws {
+        guard let frame = CaptureDisplay.screen(for: displayID)?.visibleFrame else {
+            throw ScreenCaptureError.displayUnavailable
         }
+        panel.setFrameOrigin(CGPoint(
+            x: frame.midX - panel.frame.width / 2,
+            y: frame.midY - panel.frame.height / 2
+        ))
         panel.orderFrontRegardless()
     }
 

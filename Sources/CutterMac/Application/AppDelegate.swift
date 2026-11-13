@@ -26,7 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installStatusItem()
         do {
             try shortcutService.registerDefault { [weak self] in
-                self?.capturePrimaryDisplay()
+                self?.startCapture()
             }
         } catch {
             present(error: error)
@@ -51,7 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         let captureItem = menu.addItem(
             withTitle: "开始截图    ⌥⌘2",
-            action: #selector(capturePrimaryDisplay),
+            action: #selector(startCapture),
             keyEquivalent: ""
         )
         captureItem.target = self
@@ -132,13 +132,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func capturePrimaryDisplay() {
+    @objc private func startCapture() {
         if countdownController != nil {
             cancelDelayedCapture()
             return
         }
         guard !isCapturing else { return }
         isCapturing = true
+        let displayID = CaptureDisplay.at(NSEvent.mouseLocation)
 
         captureTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -148,7 +149,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     let countdown = CaptureCountdownController()
                     self.countdownController = countdown
                     self.captureItem?.title = "取消延时截图    ⌥⌘2"
-                    try await countdown.run(seconds: self.captureSettings.delay.rawValue) { [weak self] remaining in
+                    try await countdown.run(
+                        seconds: self.captureSettings.delay.rawValue,
+                        displayID: displayID
+                    ) { [weak self] remaining in
                         self?.showCountdownStatus(remaining: remaining)
                     }
                     self.countdownController = nil
@@ -156,7 +160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     try await Task.sleep(nanoseconds: 120_000_000)
                 }
                 try Task.checkCancellation()
-                try await self.performRegionCapture()
+                try await self.performRegionCapture(on: displayID)
             } catch is CancellationError {
                 self.restoreIdleStatus()
             } catch {
@@ -165,8 +169,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func performRegionCapture() async throws {
-        let workspace = try await captureBackend.preparePrimaryDisplay(
+    private func performRegionCapture(on displayID: CGDirectDisplayID) async throws {
+        let workspace = try await captureBackend.prepareDisplay(
+            displayID: displayID,
             includeCursor: captureSettings.includeCursor
         )
         let includeCursor = captureSettings.includeCursor

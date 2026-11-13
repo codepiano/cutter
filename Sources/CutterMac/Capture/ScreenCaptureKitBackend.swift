@@ -18,7 +18,7 @@ struct DisplayCaptureGeometry: Equatable, Sendable {
               let mode = CGDisplayCopyDisplayMode(displayID),
               bounds.width > 0, bounds.height > 0,
               mode.pixelWidth > 0, mode.pixelHeight > 0 else {
-            throw ScreenCaptureError.primaryDisplayUnavailable
+            throw ScreenCaptureError.displayUnavailable
         }
         return Self(bounds: bounds, pixelWidth: mode.pixelWidth, pixelHeight: mode.pixelHeight)
     }
@@ -32,7 +32,7 @@ actor ScreenCaptureKitBackend: ScreenCaptureBackend {
     ) async throws -> any ScrollFrameSampler {
         let content = try await shareableContent()
         guard let display = content.displays.first(where: { $0.displayID == displayID }) else {
-            throw ScreenCaptureError.primaryDisplayUnavailable
+            throw ScreenCaptureError.displayUnavailable
         }
         guard let ownApplication = content.applications.first(where: {
             $0.processID == ProcessInfo.processInfo.processIdentifier
@@ -54,7 +54,7 @@ actor ScreenCaptureKitBackend: ScreenCaptureBackend {
             height: region.height
         ).intersection(CGRect(origin: .zero, size: displayBounds.size))
         guard sourceRect.width >= 1, sourceRect.height >= 1 else {
-            throw ScreenCaptureError.primaryDisplayUnavailable
+            throw ScreenCaptureError.displayUnavailable
         }
         let configuration = SCStreamConfiguration()
         configuration.sourceRect = sourceRect
@@ -71,21 +71,19 @@ actor ScreenCaptureKitBackend: ScreenCaptureBackend {
         )
     }
 
-    func preparePrimaryDisplay(includeCursor: Bool) async throws -> CaptureWorkspace {
+    func prepareDisplay(displayID: CGDirectDisplayID, includeCursor: Bool) async throws -> CaptureWorkspace {
         let content = try await shareableContent()
-        let primaryDisplayID = CGMainDisplayID()
-        guard let display = content.displays.first(where: { $0.displayID == primaryDisplayID }) else {
-            throw ScreenCaptureError.primaryDisplayUnavailable
+        guard let display = content.displays.first(where: { $0.displayID == displayID }) else {
+            throw ScreenCaptureError.displayUnavailable
         }
 
         let displayCapture = try await captureDisplay(
             display,
-            displayID: primaryDisplayID,
             includeCursor: includeCursor
         )
         return CaptureWorkspace(
             display: displayCapture,
-            windows: capturableWindows(from: content, on: primaryDisplayID)
+            windows: capturableWindows(from: content, on: displayID)
         )
     }
 
@@ -128,7 +126,6 @@ actor ScreenCaptureKitBackend: ScreenCaptureBackend {
 
     private func captureDisplay(
         _ display: SCDisplay,
-        displayID: CGDirectDisplayID,
         includeCursor: Bool
     ) async throws -> CapturedImage {
         let filter = SCContentFilter(
@@ -137,6 +134,7 @@ actor ScreenCaptureKitBackend: ScreenCaptureBackend {
             exceptingWindows: []
         )
         let configuration = SCStreamConfiguration()
+        let displayID = display.displayID
         let geometry = try DisplayCaptureGeometry.current(for: displayID)
         configuration.width = geometry.pixelWidth
         configuration.height = geometry.pixelHeight

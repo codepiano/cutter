@@ -14,24 +14,51 @@ private struct RetinaCaptureHarness {
         precondition(retina != changed && retina != moved, "Sampling must detect scale and display placement changes")
         print("Display geometry regression passed: 1x, scaled Retina 2x, mode and placement changes")
 
-        guard CommandLine.arguments.contains("--desktop") else { return }
+        let testCapture = CommandLine.arguments.contains("--desktop")
+        guard testCapture || CommandLine.arguments.contains("--display-routing") else { return }
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        let screens = NSScreen.screens
+        precondition(!screens.isEmpty)
+        for screen in screens {
+            let displayID = CaptureDisplay.id(for: screen)!
+            let center = CGPoint(x: screen.frame.midX, y: screen.frame.midY)
+            precondition(CaptureDisplay.at(center) == displayID)
+            precondition(CaptureDisplay.screen(for: displayID)?.frame == screen.frame)
+
+            // Use the same screen-relative rectangles as the selection and scroll border.
+            // Leave the windows hidden so the test does not steal focus.
+            let region = CGRect(x: 40, y: 40, width: 240, height: 160)
+            for localFrame in [CGRect(origin: .zero, size: screen.frame.size), region] {
+                let window = NSWindow(contentRect: localFrame, styleMask: .borderless, backing: .buffered, defer: true, screen: screen)
+                precondition(window.frame == localFrame.offsetBy(dx: screen.frame.minX, dy: screen.frame.minY))
+            }
+        }
+        let outside = CGPoint(x: screens.map { $0.frame.maxX }.max()! + 1, y: 0)
+        precondition(CaptureDisplay.at(outside) == CGMainDisplayID())
+        print("Display routing and window frames passed: \(screens.count) active display(s)")
+        guard testCapture else { return }
         guard CGPreflightScreenCaptureAccess() else {
             print("Desktop regression blocked: screen recording permission is required")
             exit(2)
         }
-        let app = NSApplication.shared
-        app.setActivationPolicy(.accessory)
-        let screen = NSScreen.screens.first(where: {
-            ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == CGMainDisplayID()
-        })!
+        for screen in screens {
+            try await verifyCapture(on: screen)
+        }
+    }
+
+    @MainActor private static func verifyCapture(on screen: NSScreen) async throws {
+        let displayID = CaptureDisplay.id(for: screen)!
         // Give the sampler an application/window to exclude, without taking focus.
         let marker = NSWindow(contentRect: CGRect(x: screen.visibleFrame.minX + 20, y: screen.visibleFrame.minY + 20, width: 8, height: 8), styleMask: .borderless, backing: .buffered, defer: false)
         marker.ignoresMouseEvents = true
         marker.orderFrontRegardless()
         defer { marker.orderOut(nil) }
         let backend = ScreenCaptureKitBackend()
-        let workspace = try await backend.preparePrimaryDisplay(includeCursor: false)
+        let workspace = try await backend.prepareDisplay(displayID: displayID, includeCursor: false)
         let capture = workspace.display
+        precondition(capture.displayID == displayID)
+        precondition(workspace.windows.allSatisfy { CGDisplayBounds(displayID).contains($0.frame) })
         let expectedWidth = Int((screen.frame.width * screen.backingScaleFactor).rounded())
         let expectedHeight = Int((screen.frame.height * screen.backingScaleFactor).rounded())
         precondition(capture.image.width == expectedWidth && capture.image.height == expectedHeight)
@@ -50,6 +77,6 @@ private struct RetinaCaptureHarness {
             precondition(decoded.pixelsWide == image.width && decoded.pixelsHigh == image.height)
         }
         await sampler.cancel()
-        print("Live Retina capture and PNG roundtrip passed: display=\(capture.image.width)x\(capture.image.height), scroll=\(frame.image.width)x\(frame.image.height), scale=\(capture.scaleFactor)")
+        print("Live display capture and PNG roundtrip passed: display=\(capture.image.width)x\(capture.image.height), scroll=\(frame.image.width)x\(frame.image.height), scale=\(capture.scaleFactor)")
     }
 }
